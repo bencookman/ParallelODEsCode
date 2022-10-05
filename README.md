@@ -1,2 +1,2 @@
 # ParallelODEs
-'Parallel High-Order ODE Solver' masters project
+'Parallel High-Order ODE Solver' masters project code repository
