@@ -1,0 +1,60 @@
+\documentclass{article}
+
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+\title{Euler Method}
+\author{Bradley Gadd-Speakman}
+
+\begin{document}
+
+\maketitle
+
+\newpage
+
+\section{Derivation}
+
+We want to find the solution $u(t)$ in the time domain $[a, b]$ to 
+the first order ODE given by
+\begin{equation}
+u' = f(u, t),\quad u(t_0) = u_0,\quad t_0 = a.
+\end{equation}
+In order to numerically approximate the solution we begin by 
+discretising the domain into $N+1$ equidistant points in time 
+given by $t_{n+1} = t_n + h$ where $h$ is the constant time step 
+$h = \frac{b-a}{N}$. \newline
+
+\noindent The derivation of the Euler method and its algorithm is 
+given below.
+
+\begin{equation}
+u_{n+1} = u(t_{n+1}) = u(t_n + h).
+\end{equation}
+Then after taylor expansion about the point $t_n$ we get
+\begin{equation}
+u(t_n+h) = u(t_n) + hu'(t_n) + O(h^2).
+\end{equation}
+Disregarding the $h^2$ terms and higher we obtain
+\begin{equation}
+u_{n+1} = u_n + hu'(t_n).
+\end{equation}
+Then using equation (1) we acquire the desired result
+\begin{equation}
+u_{n+1} = u_n + hf(u_n, t_n).
+\end{equation}
+
+\begin{algorithm}
+\caption{Euler Method}
+\begin{algorithmic}[1]
+\Require $a, b, N, u_0 = u(a)$
+\State $h \gets \frac{b-a}{N}$
+\State $t_0 \gets a$
+\For{$n$ in $0, 1, 2, ..., N$}
+    \State $u_{n+1} \gets u_n + hf(u_n, t_n)$
+    \State $t_{n+1} \gets t_n + h$
+\EndFor
+
+\end{algorithmic}
+\end{algorithm}
+
+\end{document}
