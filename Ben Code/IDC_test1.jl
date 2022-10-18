@@ -48,14 +48,18 @@ function IDC_test()
     N = 60
     p = 4
 
-    # Taken from page 53 of Numerical Methods for ODEs by J C Butcher
-    test_func(t, u) = (u-2t*u^2)/(1+t)
-    η_correct(t) = (1+t)/(t^2+1/α)
+    # # Taken from page 53 of Numerical Methods for ODEs by J C Butcher
+    # test_func(t, u) = (u-2t*u^2)/(1+t)
+    # η_correct(t) = (1+t)/(t^2+1/α)
 
-    η_out = IDC(test_func, 0, t_end, α, N, p)
+    # η_out = IDC(test_func, 0, t_end, α, N, p)
+    # t_in = range(0, t_end, N+1) |> collect
+    # t_plot = range(0, t_end, 1000) |> collect
+
+    # my_plot = plot(t_in, η_out)
+    # plot!(my_plot, t_plot, η_correct.(t_plot), ylimits=(0.2, 0.8))
+
+    η_out = IDC((t, u) -> cos(t), 0, t_end, α, N, p)
     t_in = range(0, t_end, N+1) |> collect
-    t_plot = range(0, t_end, 1000) |> collect
-
-    my_plot = plot(t_in, η_out)
-    plot!(my_plot, t_plot, η_correct.(t_plot), ylimits=(0.2, 0.8))
+    plot(t_in, η_out, ylimits=(-1, 1))
 end
