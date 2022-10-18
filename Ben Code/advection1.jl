@@ -1,5 +1,9 @@
 using Dates, Plots, BenchmarkTools, Statistics, LinearAlgebra
 
+include("ProjectTools.jl")
+
+using .ProjectTools
+
 """ Simple bump function """
 bump_init(x; A=1.0, d=0.0, s=1.0) = A*exp(-((x+d)/s)^2)
 
@@ -48,12 +52,7 @@ function advection_forward_euler(
     end
 
     # Error calculation (calculated at t=end)
-    if return_error
-        err_data = u_corrects[end] - u_arrays[end] # Only check final result
-        err_norm = norm(err_data, 2) # Use l2 norm in this case
-        err_max  = maximum(err_data)
-        return Dict(:data => err_data, :norm => err_norm, :max => err_max)
-    end
+    return_error && error_calculate(u_corrects[end], u_arrays[end])
 end
 
 function main()
