@@ -58,6 +58,7 @@ function IDC_test()
 
     # my_plot = plot(t_in, η_out)
     # plot!(my_plot, t_plot, η_correct.(t_plot), ylimits=(0.2, 0.8))
+    # savefig(my_plot, "issue_example.png")
 
     η_out = IDC((t, u) -> cos(t), 0, t_end, α, N, p)
     t_in = range(0, t_end, N+1) |> collect
