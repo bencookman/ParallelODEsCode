@@ -5,10 +5,16 @@ using LinearAlgebra, Statistics
 export error_calculate, compute_integration_matrix
 
 function error_calculate(data_correct, data_simulated, p)
-    err_data = abs.(data_correct - data_simulated)
+    err_local = abs.(data_correct - data_simulated)
+    err_global = abs.([sum((data_correct - data_simulated)[1:i]) for i in 1:length(data_correct)])
     err_norm = norm(err_data, p)
     err_max  = maximum(err_data)
-    return Dict(:data => err_data, :norm => err_norm, :max => err_max)
+    return Dict(
+        :local => err_local,
+        :global => err_global,
+        :norm => err_norm,
+        :max => err_max
+    )
 end
 
 function compute_integration_matrix(M; integral_resolution=10)
