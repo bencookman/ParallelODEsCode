@@ -1,8 +1,12 @@
-using Dates, Plots, BenchmarkTools, Statistics, LinearAlgebra
+using Dates, Plots, BenchmarkTools, Statistics, LinearAlgebra, LaTeXStrings
 
 include("ProjectTools.jl")
 
 using .ProjectTools
+
+err_abs(exact, approx) = abs.(exact - approx)
+err_cum(exact, approx) = [sum(err_abs(exact[1:i], approx[1:i])) for i in 1:length(approx)]
+
 
 """
 Algorithm from https://doi.org/10.1137/09075740X
@@ -21,7 +25,7 @@ function IDC(f, a, b, α, N, p)
     η[1] = α
     η_old = η
 
-    S = compute_integration_matrix(M; integral_resolution=10)
+    S = compute_integration_matrix(M; integral_resolution=100)
 
     for j in 0:(J-1)
         # Prediction loop
@@ -32,10 +36,7 @@ function IDC(f, a, b, α, N, p)
         # Correction loop
         for _ in 1:M, m in 0:(M-1)
             k = j*M + m + 1
-            η[k + 1] =
-                η[k] +
-                Δt*(f(t[k], η[k]) - f(t[k], η_old[k])) +
-                Δt*sum(S[m+1, i+1]*f(t[j*M + i + 1], η_old[j*M + i + 1]) for i in 0:M)
+            η[k + 1] = η[k] + Δt*(f(t[k], η[k]) - f(t[k], η_old[k])) + Δt*sum(S[m+1, i+1]*f(t[j*M + i + 1], η_old[j*M + i + 1]) for i in 0:M)
         end
         η_old = η
     end
@@ -46,31 +47,58 @@ end
 function IDC_test()
     t_end = 1.0
     α = 0.4
-    N = 60
-    p = 2
+    p = 5
+    N_array = (p-1).*[6*10^i for i in 1:5]
 
     # Taken from page 53 of Numerical Methods for ODEs by J C Butcher
     # Just a test to see if it works at the specified order of accuracy
     test_func(t, u) = (u-2t*u^2)/(1+t)
     η_correct(t) = (1+t)/(t^2+1/α)
 
-    t_in = range(0, t_end, N+1) |> collect
-    η_out = IDC(test_func, 0, t_end, α, N, p)
-    η_exact = η_correct.(t_in)
     t_plot = range(0, t_end, 1000) |> collect
     η_plot = η_correct.(t_plot)
+    Δt_array = t_end./N_array
+    err_array = []
 
+    plot_func = plot(
+        t_plot, η_plot,
+        ylimits=(0.2, 0.8), xlabel=L"t", ylabel=L"y"
+    )
+    for N in N_array
+        t_in = range(0, t_end, N+1) |> collect
+        η_out = IDC(test_func, 0, t_end, α, N, p)
+        η_exact = η_correct.(t_in)
+        plot!(
+            plot_func, t_in, η_out,
+            label=latexstring("N = $(N)")
+        )
 
-    plot_func = plot(t_in, η_out)
-    plot!(my_plot, t_plot, η_plot, ylimits=(0.2, 0.8))
+        # Global error was weird, so try end local error
+        err = err_abs(η_exact, η_out)[end]
+        push!(err_array, err)
+    end
 
-    err_data = error_calculate(η_correct, η_out, 2)
-    # savefig(my_plot, "issue_example.png")
+    err_order_1_array = Δt_array
+    err_order_p_array = Δt_array.^p # Take error constant C = 1
+    plot_err = plot(
+        Δt_array, err_order_p_array,
+        xscale=:log10, yscale=:log10, xlabel=L"Δt", ylabel=L"||E||",
+        linestyle=:dash, label=L"1\cdot (\Delta t)^%$p",
+        key=:bottomright
+    )
+    plot!(
+        plot_err, Δt_array, err_order_1_array,
+        linestyle=:dash, label=L"1\cdot (\Delta t)^1"
+    )
+    plot!(
+        plot_err, Δt_array, err_array,
+        markershape=:circle, markerstrokealpha=0, label=latexstring("Approximate solution at \$p = $(p)\$")
+    )
+    # savefig(plot_err, "Ben Code/output/issue_example1.png")
 
-    # η_out = IDC((t, u) -> cos(t), 0, t_end, α, N, p)
-    # t_in = range(0, t_end, N+1) |> collect
-    # my_plot = plot(t_in, η_out, ylimits=(-1, 1))
-    # t_plot = range(0, t_end, 1000) |> collect
-    # plot!(my_plot, t_plot, sin.(t_plot .+ asin.(0.4)))
-    # display(my_plot)
+    # plot_all = plot(
+    #     plot_func, plot_err,
+    #     size=(1600, 800), thickness_scaling=2.0,
+    #     markerstyle="."
+    # )
 end
