@@ -4,10 +4,6 @@ include("ProjectTools.jl")
 
 using .ProjectTools
 
-err_abs(exact, approx) = abs.(exact - approx)
-err_cum(exact, approx) = [sum(err_abs(exact[1:i], approx[1:i])) for i in 1:length(approx)]
-
-
 """
 Algorithm from https://doi.org/10.1137/09075740X
 This code is horrible and very un-Julia for the sake of matching the algorithm
@@ -44,19 +40,9 @@ function IDC(f, a, b, α, N, p)
     return η
 end
 
-function IDC_test()
-    t_end = 1.0
-    α = 0.4
-    p = 5
-    N_array = (p-1).*[6*10^i for i in 1:5]
-
-    # Taken from page 53 of Numerical Methods for ODEs by J C Butcher
-    # Just a test to see if it works at the specified order of accuracy
-    test_func(t, u) = (u-2t*u^2)/(1+t)
-    η_correct(t) = (1+t)/(t^2+1/α)
-
+function IDC_test_func(f, y, α, t_end, p, N_array)
     t_plot = range(0, t_end, 1000) |> collect
-    η_plot = η_correct.(t_plot)
+    η_plot = y.(t_plot)
     Δt_array = t_end./N_array
     err_array = []
 
@@ -66,8 +52,8 @@ function IDC_test()
     )
     for N in N_array
         t_in = range(0, t_end, N+1) |> collect
-        η_out = IDC(test_func, 0, t_end, α, N, p)
-        η_exact = η_correct.(t_in)
+        η_out = IDC(f, 0, t_end, α, N, p)
+        η_exact = y.(t_in)
         plot!(
             plot_func, t_in, η_out,
             label=latexstring("N = $(N)")
@@ -95,10 +81,30 @@ function IDC_test()
         markershape=:circle, markerstrokealpha=0, label=latexstring("Approximate solution at \$p = $(p)\$")
     )
     # savefig(plot_err, "Ben Code/output/issue_example1.png")
+end
 
-    # plot_all = plot(
-    #     plot_func, plot_err,
-    #     size=(1600, 800), thickness_scaling=2.0,
-    #     markerstyle="."
-    # )
+"""
+Taken from page 53 of Numerical Methods for ODEs by J C Butcher. This is just a
+test to see if it works at the specified order of accuracy.
+"""
+function IDC_test_1()
+    α = 0.4
+    t_end = 1.0
+    p = 5
+    N_array = (p-1).*[6*10^i for i in 1:5]
+
+    grad_func(t, y) = (y-2t*y^2)/(1+t)
+    exact_func(t) = (1+t)/(t^2+1/α)
+    IDC_test_func(grad_func, exact_func, α, t_end, p, N_array)
+end
+
+function IDC_test_2()
+    α = 1.0
+    t_end = 5.0
+    p = 5
+    N_array = (p-1).*[6*10^i for i in 1:5]
+
+    grad_func(t, y) = 4t*sqrt(y)
+    exact_func(t) = (1 + t^2)^2
+    IDC_test_func(grad_func, exact_func, α, t_end, p, N_array)
 end

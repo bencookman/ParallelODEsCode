@@ -2,7 +2,12 @@ module ProjectTools
 
 using LinearAlgebra, Statistics
 
-export error_calculate, compute_integration_matrix
+export
+    err_abs,
+    err_cum,
+    err_norm,
+    err_max,
+    compute_integration_matrix
 
 err_abs(exact, approx) = abs.(exact - approx)
 err_cum(exact, approx) = [sum(err_abs(exact[1:i], approx[1:i])) for i in 1:length(data_correct)]
