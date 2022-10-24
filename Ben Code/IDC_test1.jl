@@ -98,6 +98,7 @@ function IDC_test_1()
     IDC_test_func(grad_func, exact_func, α, t_end, p, N_array)
 end
 
+""" Another test """
 function IDC_test_2()
     α = 1.0
     t_end = 5.0
