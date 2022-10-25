@@ -10,6 +10,8 @@ This code is horrible and very un-Julia for the sake of matching the algorithm
 in the above paper as closely as possible. A refactored version will be made in
 time. Note indexing used for vectors in given algorithm starts at 0 but Julia
 starts at 1.
+This algorithm is very specific to equidistant nodes. Not so specific to choice
+of integrating scheme.
 """
 function IDC(f, a, b, α, N, p)
     # Initialise variables
@@ -18,10 +20,10 @@ function IDC(f, a, b, α, N, p)
     M = p - 1
     J = fld(N, M)
     η = Array{Float64, 1}(undef, N+1)
-    η[1] = α
     η_old = η
+    η_old[1] = α
 
-    S = compute_integration_matrix(M; integral_resolution=100)
+    S = compute_integration_matrix(M; integral_resolution=20)
 
     for j in 0:(J-1)
         # Prediction loop
@@ -30,11 +32,14 @@ function IDC(f, a, b, α, N, p)
             η[k + 1] = η[k] + Δt*f(t[k], η[k])
         end
         # Correction loop
-        for _ in 1:M, m in 0:(M-1)
-            k = j*M + m + 1
-            η[k + 1] = η[k] + Δt*(f(t[k], η[k]) - f(t[k], η_old[k])) + Δt*sum(S[m+1, i+1]*f(t[j*M + i + 1], η_old[j*M + i + 1]) for i in 0:M)
+        for l in 1:M
+            for m in 0:(M-1)
+                k = j*M + m + 1
+                η[k + 1] = η[k] + Δt*(f(t[k], η[k]) - f(t[k], η_old[k])) + Δt*sum(S[m+1, i+1]*f(t[j*M + i + 1], η_old[j*M + i + 1]) for i in 0:M)
+                # println(η[k] - η_old[k])
+            end
+            η_old = η
         end
-        η_old = η
     end
 
     return η
@@ -80,7 +85,7 @@ function IDC_test_func(f, y, α, t_end, p, N_array)
         plot_err, Δt_array, err_array,
         markershape=:circle, markerstrokealpha=0, label=latexstring("Approximate solution at \$p = $(p)\$")
     )
-    # savefig(plot_err, "Ben Code/output/issue_example1.png")
+    savefig(plot_err, "Ben Code/output/tests/test19.png")
 end
 
 """
@@ -98,7 +103,10 @@ function IDC_test_1()
     IDC_test_func(grad_func, exact_func, α, t_end, p, N_array)
 end
 
-""" Another test """
+"""
+Another test
+doi: 10.1137/09075740X
+"""
 function IDC_test_2()
     α = 1.0
     t_end = 5.0
