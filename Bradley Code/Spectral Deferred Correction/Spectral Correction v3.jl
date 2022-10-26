@@ -35,12 +35,11 @@ function spectral_correction(f, a, b, u_init, k, n, U, F, disp)
     tt = a:(b-a)/1000:b
 
     # Inital u(t) approximate points
-    h = (b-a)/k
-    t = [i*h + a for i in 0:k]
+    t = 0.5*(b-a)*[cos((1-i/k)*pi)+1 for i in 0:k] .+ a
     u_hat = zeros(k+1)
     u_hat[1] = u_init
     for i in 1:k
-        u_hat[i+1] = u_hat[i] + h*f(u_hat[i], t[i])
+        u_hat[i+1] = u_hat[i] + (t[i+1]-t[i])*f(u_hat[i], t[i])
     end
 
     u_mat = zeros(k+1, n+1)
@@ -49,7 +48,7 @@ function spectral_correction(f, a, b, u_init, k, n, U, F, disp)
     for i in 1:n
         f_hat = f.(u_hat, t)
 
-        # Calculate polynomial interpolation f_pol(t) of f(u, t) using equidistant nodes
+        # Calculate polynomial interpolation f_pol(t) of f(u, t) using chebyshev nodes
         function f_pol(x)
             S = 0
             for j in 1:k+1
@@ -68,7 +67,7 @@ function spectral_correction(f, a, b, u_init, k, n, U, F, disp)
         errs = zeros(k+1)
         errs[1] = 0
         for j in 1:k
-            errs[j+1] = errs[j] + h*(f(u_hat[j] + errs[j], t[j]) - f(u_hat[j], t[j])) + res[j+1] - res[j]
+            errs[j+1] = errs[j] + (t[i+1]-t[i])*(f(u_hat[j] + errs[j], t[j]) - f(u_hat[j], t[j])) + res[j+1] - res[j]
         end
 
         # Correct the approximations for u(t) using approximated errors
@@ -98,38 +97,37 @@ function spectral_correction(f, a, b, u_init, k, n, U, F, disp)
         end
         display(p)
     end
-    return(abs(U.(t[end]) - u_mat[end, end]))
+    return(abs(U(t[end]) - u_mat[end, end]))
 end
 
 function main()
     # ODE
     # u'(t) = f(u(t), t), t ∈ [a, b]
-    f(u, t) = -2*t*u
+    f(u, t) = (t == 0) ? -1 : u/t + 3*t
 
     # Initial conditions
     # t₀ = a = 0, u₀ = u(t₀) = 0
 
     # Initialise parameters
     a = 0
-    b = 2
-    u_init = 1
+    b = 1.05
+    u_init = 0
     # Number of time steps (k+1 nodes)
-    k = 10
+    k = 15
     # Number of corrections
-    n = 6
+    n = 5
 
     # True solution u(t)
-    U(t) = exp(-t^2)
+    U(t) = 3*t^2 - t
     # True derivative f(t) = u'(t)
-    F(t) = -2*t*exp(-t^2)
+    F(t) = 6*t - 1
 
     final_err = spectral_correction(f, a, b, u_init, k, n, U, F, true)
     println(final_err)
 
     log_final_errs = []
     log_hs = []
-
-    for k in 1:1:13
+    for b in 1:5e-2:10
         log_final_err = log(spectral_correction(f, a, b, u_init, k, n, U, F, false))
         push!(log_final_errs, log_final_err)
         log_h = log((b-a)/k)
@@ -141,11 +139,11 @@ function main()
     xx = x_min:(x_max-x_min)/100:x_max
     y_min = minimum(log_final_errs)
     y_max = maximum(log_final_errs)
-    yy1 = (xx .- x_min) .+ y_min .+ 1
-    yy = min(k+1, n+1)*(xx .- x_min) .+ y_min .+ 1
+    yy1 = 2*(xx .- x_min) .+ y_min .+ 1e-1
+    yy5 = 6*(xx .- x_min) .+ y_min .+ 1e-1
     plot(xx, yy1, labels = "Order 1 test line", linestyle = :dash, legend = :outertopright, ylims = [y_min, y_max])
-    plot!(xx, yy, labels = "Order $(min(k+1, n+1)) test line", linestyle = :dash)
-    display(plot!(log_hs, log_final_errs, labels = "Global error", xlabel = "Log step size", ylabel = "Global log error"))
+    plot!(xx, yy5, labels = "Order 5 test line", linestyle = :dash)
+    display(plot!(log_hs, log_final_errs, labels = "Global error against interval length"))
 end
 
 main()
