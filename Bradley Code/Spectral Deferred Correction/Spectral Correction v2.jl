@@ -85,7 +85,7 @@ function spectral_correction(f, a, b, u_init, k, n, U, F, disp)
             p4 = plot(tt, U.(tt), labels = "True u(t)")
             scatter!(t, u_hat, labels = "Approx u(t)", markersize = 1.5, markerstrokewidth = 0)
             scatter!(t, u_hat_new, labels = "Correction u(t)", markersize = 1.5, markerstrokewidth = 0)
-            display(plot(p1, p2, p3, p4, legend = :outertop))
+            display(plot(p1, p2, p3, p4, plot_title = "Correction $i", legend = :outertop))
         end
         u_hat = u_hat_new
     end
@@ -98,40 +98,41 @@ function spectral_correction(f, a, b, u_init, k, n, U, F, disp)
         end
         display(p)
     end
-    return(abs(U(t[end]) - u_mat[end, end]))
+    return(abs(U.(t[end]) - u_mat[end, end]))
 end
 
 function main()
     # ODE
     # u'(t) = f(u(t), t), t ∈ [a, b]
-    f(u, t) = (t == 0) ? -1 : u/t + 3*t
+    f(u, t) = -2*t*u
 
     # Initial conditions
     # t₀ = a = 0, u₀ = u(t₀) = 0
 
     # Initialise parameters
     a = 0
-    b = 1.05
-    u_init = 0
+    b = 2
+    u_init = 1
     # Number of time steps (k+1 nodes)
     k = 10
     # Number of corrections
-    n = 5
+    n = 6
 
     # True solution u(t)
-    U(t) = 3*t^2 - t
+    U(t) = exp(-t^2)
     # True derivative f(t) = u'(t)
-    F(t) = 6*t - 1
+    F(t) = -2*t*exp(-t^2)
 
     final_err = spectral_correction(f, a, b, u_init, k, n, U, F, true)
     println(final_err)
 
     log_final_errs = []
     log_hs = []
-    for b in 1:5e-2:10
+
+    for k in 1:1:13
         log_final_err = log(spectral_correction(f, a, b, u_init, k, n, U, F, false))
         push!(log_final_errs, log_final_err)
-        log_h = log(b-a)
+        log_h = log((b-a)/k)
         push!(log_hs, log_h)
     end
 
@@ -140,11 +141,11 @@ function main()
     xx = x_min:(x_max-x_min)/100:x_max
     y_min = minimum(log_final_errs)
     y_max = maximum(log_final_errs)
-    yy1 = 2*(xx .- x_min) .+ y_min .+ 1e-1
-    yy5 = 6*(xx .- x_min) .+ y_min .+ 1e-1
+    yy1 = (xx .- x_min) .+ y_min .+ 1
+    yy = min(k+1, n+1)*(xx .- x_min) .+ y_min .+ 1
     plot(xx, yy1, labels = "Order 1 test line", linestyle = :dash, legend = :outertopright, ylims = [y_min, y_max])
-    plot!(xx, yy5, labels = "Order 5 test line", linestyle = :dash)
-    display(plot!(log_hs, log_final_errs, labels = "Global error against interval length"))
+    plot!(xx, yy, labels = "Order $(min(k+1, n+1)) test line", linestyle = :dash)
+    display(plot!(log_hs, log_final_errs, labels = "Global error", xlabel = "Log step size", ylabel = "Global log error"))
 end
 
 main()
