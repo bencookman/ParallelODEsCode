@@ -1,0 +1,71 @@
+\documentclass{article}
+
+\title{Spectral Deferred Correction Report}
+\author{Bradley Gadd-Speakman}
+
+\newcommand{\V}{\textbf}
+\begin{document}
+
+\begin{titlepage}
+    \maketitle
+\end{titlepage}
+
+\section{Method}
+
+We want to solve a first order ODE with initial conditions of the form 
+\begin{equation}
+    \V{u}'(t) = \V{f}(\V{u}, t), \quad t \in [a, b], \quad t_0=a, \quad \V{u}_0=\V{u}(a).
+\end{equation}
+
+We begin by writing the ODE in Picard integral form
+by integrating both sides with respect to time from a to t
+\begin{equation}
+    \V{u}(t) = \V{u}(a) + \int_a^t{\! \V{f}(\V{u}(s), s) \, \mathrm{ds}}.
+\end{equation}
+
+We are trying to find an approximate function for $\V{u}(t)$ which we
+denote by $\hat{\V{u}}(t)$. Approximate values for $\hat{\V{u}}(t)$
+at various nodes in $t \in [a, b]$ are initially calculated via
+Euler's method. Two important metrics in this method are the residuals
+$\V{r}(t)$ and errors $\V{e}(t)$
+\begin{equation}
+    \V{r}(t) = \V{u}(a) - \hat{\V{u}}(t) + \int_a^t{\! \V{f}(\hat{\V{u}}(s), s) \, \mathrm{ds}}
+\end{equation}
+\begin{equation}
+    \V{e}(t) = \V{u}(t) - \hat{\V{u}}(t).
+\end{equation}
+
+After substituting equation (4) into (2) we obtain the following
+\begin{equation}
+    \hat{\V{u}}(t) + \V{e}(t) = \V{u}(a) + \int_a^t{\! \V{f}(\hat{\V{u}}(s) + \V{e}(s), s) \, \mathrm{ds}}.
+\end{equation}
+
+Subtracting $\hat{\V{u}}(t)$ from both sides while adding and subtracting 
+$\int_a^t{\! \V{f}(\hat{\V{u}}(s), s) \, \mathrm{ds}}$ we arrive at
+\begin{equation}
+    \V{e}(t) = \V{u}(a) - \hat{\V{u}}(t) + \int_a^t{\! \V{f}(\hat{\V{u}}(s), s) \, \mathrm{ds}} 
+    - \int_a^t{\! \V{f}(\hat{\V{u}}(s), s) \, \mathrm{ds}} + \int_a^t{\! \V{f}(\hat{\V{u}}(s) + \V{e}(s), s) \, \mathrm{ds}}.
+\end{equation}
+
+Then we substitute equation (3) into equation (6)
+\begin{equation}
+    \V{e}(t) = \V{r}(t) + \int_a^t{\! \V{f}(\hat{\V{u}}(s) + \V{e}(s), s) - \V{f}(\hat{\V{u}}(s), s) \, \mathrm{ds}}
+\end{equation}
+\begin{equation}
+    \V{e}'(t) = \V{r}'(t) + \V{G}(\hat{\V{u}}(t), \V{e}(t), t)
+\end{equation}
+
+where $\V{G}(\hat{\V{u}}(s), \V{e}(s), s) = \V{f}(\hat{\V{u}}(s) + \V{e}(s), s) - \V{f}(\hat{\V{u}}(s), s)$. 
+We can then calculate approximate values of the error function at various 
+nodes $t_i$ where $t_{i+1} = t_{i} + h_{i}$ using Euler's method
+
+\begin{equation}
+    \hat{\V{u}}(t_{i+1}) = \hat{\V{u}}(t_i) + h_i \V{f}(\hat{\V{u}}(t_i), t_i), \quad \hat{\V{u}}(t_0) = \V{u}_0
+\end{equation}
+\begin{equation}
+    \hat{\V{e}}(t_{i+1}) = \hat{\V{e}}(t_i) + h_i\V{G}(\hat{\V{u}}(t_i), \hat{\V{e}}(t_i), t_i) + \V{r}(t_{i+1}) - \V{r}(t_i), \quad \hat{\V{e}}(t_0) = 0.
+\end{equation}
+
+
+
+\end{document}
