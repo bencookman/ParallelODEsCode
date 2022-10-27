@@ -69,23 +69,20 @@ function IDC_test_func(f, y, α, t_end, p, N_array)
         push!(err_array, err)
     end
 
-    err_order_1_array = Δt_array
-    err_order_p_array = Δt_array.^p # Take error constant C = 1
     plot_err = plot(
-        Δt_array, err_order_p_array,
+        Δt_array, err_array,
         xscale=:log10, yscale=:log10, xlabel=L"Δt", ylabel=L"||E||",
-        linestyle=:dash, label=L"1\cdot (\Delta t)^%$p",
-        key=:bottomright
+        markerstyle=".", label=latexstring("Approximate solution at \$p = $(p)\$"),
+        key=:bottomright, size=(1600, 1200), thickness_scaling=2.0
     )
-    plot!(
-        plot_err, Δt_array, err_order_1_array,
-        linestyle=:dash, label=L"1\cdot (\Delta t)^1"
-    )
-    plot!(
-        plot_err, Δt_array, err_array,
-        markershape=:circle, markerstrokealpha=0, label=latexstring("Approximate solution at \$p = $(p)\$")
-    )
-    savefig(plot_err, "Ben Code/output/tests/test19.png")
+    for order in 1:p
+        err_order_array = Δt_array.^order # Taking error constant = 1 always
+        plot!(
+            plot_err, Δt_array, err_order_array,
+            linestyle=:dash, label=L"1\cdot (\Delta t)^%$order"
+        )
+    end
+    savefig(plot_err, "Ben Code/output/tests/test23.png")
 end
 
 """
