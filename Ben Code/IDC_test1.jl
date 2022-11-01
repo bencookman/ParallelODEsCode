@@ -74,6 +74,100 @@ function IDC_single(f, a, b, α, N, p)
     return η
 end
 
+""" Integral deferred correction with a single group - use matrix """
+function IDC_single_matrix(f, a, b, α, N, p)
+    # Initialise variables
+    t = range(a, b, N+1) |> collect
+    Δt = (b - a)/N
+    η = Array{Float64, 2}(undef, p, N+1)
+    η[:, 1] .= α
+
+    println(Δt)
+    S = compute_integration_matrix(N; integral_resolution=100)
+
+    # Prediction loop
+    for m in 1:N
+        η[1, m + 1] = η[1, m] + Δt*f(t[m], η[1, m])
+    end
+    # Correction loop
+    for l in 2:p
+        η[l, 1] = η[l-1, 1]
+        for m in 1:N
+            η[l, m + 1] = η[l, m] + Δt*(f(t[m], η[l, m]) - f(t[m], η[l-1, m])) + Δt*sum(S[m, i]*f(t[i], η[l-1, i]) for i in 1:(N+1))
+        end
+    end
+
+    return η[end, :]
+end
+
+""" Integral deferred correction with a single group - use error and residuals """
+function IDC_single_error(f, a, b, α, N, p)
+    # Initialise variables
+    t = range(a, b, N+1) |> collect
+    Δt = (b - a)/N
+    η = Array{Float64, 1}(undef, N+1)
+    η[1] = α
+
+    S = compute_integration_matrix(N; integral_resolution=1000)
+
+    # Prediction loop
+    for m in 1:N
+        η[m + 1] = η[m] + Δt*f(t[m], η[m])
+    end
+    # Correction loop
+    for l in 2:3
+        δ = Array{Float64, 1}(undef, N + 1)
+        δ[1] = 0
+        for m in 1:N
+            Δϵ = Δt*sum(S[m, i]*f(t[i], η[i]) for i in 1:(N + 1)) - η[m + 1] + η[m] # difference in residuals at m+1 and m
+            δ[m + 1] = δ[m] + Δt*(f(t[m], η[m] + δ[m]) - f(t[m], η[m])) + Δϵ
+            # l == 3 && println(Δt*(f(t[m], η[m] + δ[m]) - f(t[m], η[m])) + Δϵ)
+        end
+        η .+= δ
+    end
+
+    return η
+end
+
+""" Integral deferred correction with a single group - use polynomial"""
+function IDC_single_poly(f, a, b, α, N, p)
+    # Initialise variables
+    t = range(a, b, N+1) |> collect
+    Δt = (b - a)/N
+    η = Array{Float64, 1}(undef, N+1)
+    η[1] = α
+
+    # Prediction loop
+    for m in 1:N
+        η[m + 1] = η[m] + Δt*f(t[m], η[m])
+    end
+    # Correction loop
+    for l in 2:p
+        δ = Array{Float64, 1}(undef, N + 1)
+        δ[1] = 0
+
+        f_poly(t) = sum(
+            f(t[i], η[i])*prod(
+                (t - t[k])/(t[i] - t[k])
+                for k in 1:(i - 1) ∪ (i + 1):(N + 1)
+            )
+            for i in 1:(N + 1)
+        )
+        t_int = range(a, b, 1000) |> collect
+        dt = t_int[2] - t_int[1]
+        integrals = [sum(f_poly(t)*dt for t in t_int if t <= t[m]) for m in 1:(N + 1)]
+        ϵ = integrals .+ α .- η
+
+        for m in 1:N
+            Δϵ = ϵ[m + 1] - ϵ[m]
+            δ[m + 1] = δ[m] + Δt*(f(t[m], η[m] + δ[m]) - f(t[m], η[m])) + Δϵ
+        end
+        η .+= δ
+    end
+
+    return η
+end
+
 
 function IDC_test_func(f, y, α, t_end, p, N_array)
     t_plot = range(0, t_end, 1000) |> collect
@@ -87,7 +181,7 @@ function IDC_test_func(f, y, α, t_end, p, N_array)
     )
     for N in N_array
         t_in = range(0, t_end, N+1) |> collect
-        η_out = IDC_single(f, 0, t_end, α, N, p)
+        η_out = IDC_single_poly(f, 0, t_end, α, N, p)
         η_exact = y.(t_in)
         plot!(
             plot_func, t_in, η_out,
@@ -113,7 +207,7 @@ function IDC_test_func(f, y, α, t_end, p, N_array)
         )
     end
     dtstring = Dates.format(now(), "DY-m-d-TH-M-S")
-    fname = "Ben Code/output/tests/test-single-$dtstring.png"
+    fname = "Ben Code/output/tests/test-single-poly-$dtstring.png"
     savefig(plot_err, fname)
 end
 
@@ -140,7 +234,7 @@ function IDC_test_2()
     α = 1.0
     t_end = 5.0
     p = 5
-    N_array = (p-1).*[6*10^i for i in 1:5]
+    N_array = 10:30
 
     grad_func(t, y) = 4t*sqrt(y)
     exact_func(t) = (1 + t^2)^2
