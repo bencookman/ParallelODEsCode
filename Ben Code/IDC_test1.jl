@@ -218,42 +218,6 @@ function newton_cotes_integration(t, n, f_pol)
     return(int_hat)
 end
 
-
-# """ Integral deferred correction with a single group - use barycentric lagrange polynomial"""
-# function IDC_single_poly_bary(f, a, b, α, N, p)
-#     # Initialise variables
-#     t = range(a, b, N+1) |> collect
-#     Δt = (b - a)/N
-#     η = Array{Float64, 1}(undef, N+1)
-#     η[1] = α
-
-#     # Prediction loop
-#     for m in 1:N
-#         η[m + 1] = η[m] + Δt*f(t[m], η[m])
-#     end
-#     # Correction loop
-#     for l in 2:p
-#         δ = Array{Float64, 1}(undef, N + 1)
-#         δ[1] = 0
-
-#         w = [binomial(N, j)*(-1)^j for j in 0:N]
-#         f_poly(x) = sum(f(t[i], η[i])*w[i]/(x - t[i]) for i in 1:(N + 1))/sum(w[i]/(x - t[i]) for i in 1:(N + 1))
-
-#         t_int = range(a, b, 1000) |> collect
-#         dt = t_int[2] - t_int[1]
-#         integrals = [sum(f_poly(t_val) for t_val in t_int if t_val <= t[m]).*dt for m in 1:(N + 1)]
-#         ϵ = integrals .+ α .- η
-
-#         for m in 1:N
-#             δ[m + 1] = δ[m] + Δt*(f(t[m], η[m] + δ[m]) - f(t[m], η[m])) + ϵ[m + 1] - ϵ[m]
-#         end
-#         η .+= δ
-#     end
-
-#     return η
-# end
-
-
 function IDC_test_func(f, y, α, t_end, p, N_array)
     t_plot = range(0, t_end, 1000) |> collect
     η_plot = y.(t_plot)
@@ -329,20 +293,27 @@ end
 
 function integration_matrix_test()
     # Set up test
-    t_end = 1.0
     integral_resolution = 1000
-    integral_exact = sin(t_end)
-
-    integral_approximations = Array{Float64, 1}(undef, 0)
+    # t_end = 1.0
+    # f(t) = cos(t)
+    # integral_exact = sin(t_end)
+    # t_end = pi
+    # f(t) = cos(t)^2
+    # integral_exact = t_end/2 + sin(2*t_end)/4
+    t_end = 10
+    f(t) = sqrt(t)
+    integral_exact = 2*(t_end)^(1.5)/3
 
     # Do test
+    integral_approximations = Array{Float64, 1}(undef, 0)
     sum_resolutions = 1:2:100
     for sum_resolution in sum_resolutions
         t_sample = range(0, t_end, sum_resolution+1) |> collect
-        f_sample = cos.(t_sample)
+        f_sample = f.(t_sample)
         S = compute_integration_matrix(sum_resolution; integral_resolution=integral_resolution)
-        integral_approx = sum(sum(S[:, i] .* f_sample[i] for i in 1:(sum_resolution+1)))/sum_resolution
+        integral_approx = t_end * sum(sum(S[:, i] .* f_sample[i] for i in 1:(sum_resolution+1))) / sum_resolution
 
+        println(integral_approx)
         push!(integral_approximations, integral_approx)
     end
 
@@ -354,4 +325,7 @@ function integration_matrix_test()
         xscale=:log10, yscale=:log10, xlabel=L"\Delta t", ylabel=L"||E||",
         size=(1200, 900), thickness_scaling=1.5
     )
+    dtstring = Dates.format(now(), "DY-m-d-TH-M-S")
+    fname = "Ben Code/output/tests/int-matrix-err-sqrt-$dtstring.png"
+    savefig(test_plot, fname)
 end

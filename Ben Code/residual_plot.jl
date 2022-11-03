@@ -58,7 +58,9 @@ function plot_residual()
         linecolor=:orange, label=""
     )
 
-    display(residual_plot)
+    dtstring = Dates.format(now(), "DY-m-d-TH-M-S")
+    fname = "Ben Code/output/residual-ex-$dtstring.png"
+    savefig(residual_plot, fname)
 end
 
 function residual_integral(t::Float64, f, y_approx_func; N=100)
