@@ -116,7 +116,7 @@ function main()
     # Number of time steps (k+1 nodes)
     k = 10
     # Number of corrections
-    n = 5
+    n = 10
 
     # True solution u(t)
     U(t) = exp(-t^2)
@@ -126,7 +126,7 @@ function main()
     final_err = spectral_correction(f, a, b, u_init, k, n, U, F, true)
     println(final_err)
 
-    I = 5:15
+    I = 1:15
     niterations = length(I)
     log_final_errs = Vector{Float64}(undef, niterations)
     log_hs = Vector{Float64}(undef, niterations)
