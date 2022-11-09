@@ -15,17 +15,14 @@ of integrating scheme.
 """
 function IDC(f, a, b, α, N, p)
     # Initialise variables
-    t = range(a, b, N+1) |> collect
+    t = range(a, b, N + 1) |> collect
     Δt = (b - a)/N
     M = p - 1
     J = fld(N, M)
-    η = Array{Float64, 1}(undef, N+1)
+    η = zeros(N + 1)
     η[1] = α
-    η_old = η
 
-    println(Δt)
-
-    S = compute_integration_matrix(M; integral_resolution=100)
+    S = compute_integration_matrix(M; integral_resolution=1000)
 
     for j in 0:(J-1)
         # Prediction loop
@@ -34,12 +31,16 @@ function IDC(f, a, b, α, N, p)
             η[k + 1] = η[k] + Δt*f(t[k], η[k])
         end
         # Correction loop
-        for l in 1:M
+        for l in 2:p
+            η_old = copy(η)
             for m in 0:(M-1)
                 k = j*M + m + 1
-                η[k + 1] = η[k] + Δt*(f(t[k], η[k]) - f(t[k], η_old[k])) + Δt*sum(S[m+1, i+1]*f(t[j*M + i + 1], η_old[j*M + i + 1]) for i in 0:M)
+                η[k + 1] = η[k] + Δt*(f(t[k], η[k]) - f(t[k], η_old[k])) + Δt*sum(S[m + 1, i + 1]*f(t[j*M + i + 1], η_old[j*M + i + 1]) for i in 0:M)
             end
-            η_old = η
+            println(η)
+            println(η_old)
+            println(η.-η_old)
+            println()
         end
     end
 
@@ -52,11 +53,9 @@ function IDC_single(f, a, b, α, N, p)
     # Initialise variables
     t = range(a, b, N+1) |> collect
     Δt = (b - a)/N
-    η = Array{Float64, 1}(undef, N+1)
+    η = zeros(N+1)
     η[1] = α
-    η_old = η
 
-    println(Δt)
     S = compute_integration_matrix(N; integral_resolution=100)
 
     # Prediction loop
@@ -64,11 +63,11 @@ function IDC_single(f, a, b, α, N, p)
         η[m + 1] = η[m] + Δt*f(t[m], η[m])
     end
     # Correction loop
-    for l in 1:(p-1)
+    for l in 2:p
+        η_old = copy(η)
         for m in 1:N
-            η[m + 1] = η[m] + Δt*(f(t[m], η[m]) - f(t[m], η_old[m])) + Δt*sum(S[m, i]*f(t[i], η_old[i]) for i in 1:(N+1))
+            η[m + 1] = η[m] + Δt*(f(t[m], η[m]) - f(t[m], η_old[m])) + Δt*sum(S[m, i]*f(t[i], η_old[i]) for i in 1:(N + 1))
         end
-        η_old = η
     end
 
     return η
@@ -207,7 +206,6 @@ function newton_cotes_weights(t, n)
     end
     return(weights)
 end
-
 # Function to approximately integrate a polynomial interpolation of f(u, t) using Newton-Cotes
 function newton_cotes_integration(t, n, f_pol)
     int_hat = zeros(length(t))
@@ -230,7 +228,7 @@ function IDC_test_func(f, y, α, t_end, p, N_array)
     )
     for N in N_array
         t_in = range(0, t_end, N+1) |> collect
-        η_out = IDC_single_poly_NC(f, 0, t_end, α, N, p)
+        η_out = IDC_single(f, 0, t_end, α, N, p)
         η_exact = y.(t_in)
         plot!(
             plot_func, t_in, η_out,
@@ -256,7 +254,7 @@ function IDC_test_func(f, y, α, t_end, p, N_array)
         )
     end
     dtstring = Dates.format(now(), "DY-m-d-TH-M-S")
-    fname = "Ben Code/output/tests/test-single-poly-NC-$dtstring.png"
+    fname = "Ben Code/output/tests/test-IDC_single-$dtstring.png"
     savefig(plot_err, fname)
 end
 
@@ -267,8 +265,8 @@ test to see if it works at the specified order of accuracy.
 function IDC_test_1()
     α = 0.4
     t_end = 1.0
-    p = 5
-    N_array = 2:30
+    p = 4
+    N_array = (p - 1).*collect(3:3:100)
 
     grad_func(t, y) = (y-2t*y^2)/(1+t)
     exact_func(t) = (1+t)/(t^2+1/α)
@@ -282,12 +280,25 @@ https://doi.org/10.1137/09075740X
 function IDC_test_2()
     α = 1.0
     t_end = 5.0
-    p = 5
-    N_array = 10:30
+    p = 2
+    N_array = (p - 1).*collect(3:100)
+    N_array_single = collect(3:50)
 
     grad_func(t, y) = 4t*sqrt(y)
     exact_func(t) = (1 + t^2)^2
-    IDC_test_func(grad_func, exact_func, α, t_end, p, N_array)
+    IDC_test_func(grad_func, exact_func, α, t_end, p, N_array_single)
+end
+
+function IDC_test_3()
+    α = 1.0
+    t_end = 5.0
+    p = 2
+    N_array = (p - 1).*collect(3:100)
+    N_array_single = collect(3:50)
+
+    grad_func(t, y) = t^3
+    exact_func(t) = 0.25*t^4 + α
+    IDC_test_func(grad_func, exact_func, α, t_end, p, N_array_single)
 end
 
 
@@ -297,12 +308,15 @@ function integration_matrix_test()
     # t_end = 1.0
     # f(t) = cos(t)
     # integral_exact = sin(t_end)
-    # t_end = pi
-    # f(t) = cos(t)^2
-    # integral_exact = t_end/2 + sin(2*t_end)/4
-    t_end = 10
-    f(t) = sqrt(t)
-    integral_exact = 2*(t_end)^(1.5)/3
+    t_end = 10*pi
+    f(t) = cos(t)^2
+    integral_exact = t_end/2 + sin(2*t_end)/4
+    # t_end = 100
+    # f(t) = sqrt(t)
+    # integral_exact = 2*(t_end)^(1.5)/3
+    # t_end = 0.001
+    # f(t) = cos(t)*exp(sin(t))
+    # integral_exact = exp(sin(t_end)) - 1
 
     # Do test
     integral_approximations = Array{Float64, 1}(undef, 0)
@@ -326,6 +340,6 @@ function integration_matrix_test()
         size=(1200, 900), thickness_scaling=1.5
     )
     dtstring = Dates.format(now(), "DY-m-d-TH-M-S")
-    fname = "Ben Code/output/tests/int-matrix-err-sqrt-$dtstring.png"
+    fname = "Ben Code/output/tests/int-matrix-err-cos-2-10-$dtstring.png"
     savefig(test_plot, fname)
 end
