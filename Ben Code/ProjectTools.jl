@@ -17,19 +17,19 @@ err_max(exact, approx)  = maximum(err_abs(exact, approx))
 function integration_matrix_equispaced(M)
     scipy_interpolate = pyimport("scipy.interpolate")
 
-    x = collect(Float64, 0:M)
-    # Calculate anti-derivatives of polynomial interpolants to δᵢⱼ
+    x = collect(0.0:M)
+    # Calculate anti-derivatives of polynomial interpolants
     q_func = []
     for i in 1:(M + 1)
         yᵢ = zeros(Float64, M + 1)
         yᵢ[i] = 1.0
-        pᵢ_coeffs = scipy_interpolate.lagrange(x, yᵢ).c |> reverse  # Lagrange interpolant to yᵢ at x
-        qᵢ_coeffs = pᵢ_coeffs ./ collect(Float64, 1:length(pᵢ_coeffs))              # Anti-derivative of pᵢ
-        qᵢ_func(t) = sum(qᵢⱼ*t^j for (j, qᵢⱼ) in enumerate(qᵢ_coeffs))
+        pᵢ_coeffs = scipy_interpolate.lagrange(x, yᵢ).c |> reverse              # Lagrange interpolant to yᵢ at x
+        qᵢ_coeffs = pᵢ_coeffs ./ collect(1.0:length(pᵢ_coeffs))                 # Anti-derivative of pᵢ
+        qᵢ_func(t) = sum(qᵢⱼ*t^Float64(j) for (j, qᵢⱼ) in enumerate(qᵢ_coeffs))
         push!(q_func, qᵢ_func)
     end
     # Use anti-derivatives to evaluate integration matrix
-    return [qᵢ_func(m + 1) - qᵢ_func(m) for m in 0:(M - 1), (_, qᵢ_func) in enumerate(q_func)]
+    return [qᵢ_func(m + 1) - qᵢ_func(m) for m in 0.0:(M - 1), qᵢ_func in q_func]
 end
 
 end
