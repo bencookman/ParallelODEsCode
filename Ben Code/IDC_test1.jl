@@ -43,6 +43,36 @@ function IDC_forward_euler(f, a, b, α, N, p)
     return η
 end
 
+function IDC_forward_euler_single_legendre(f, a, b, α, N, p)
+    # Initialise variables
+    t = range(a, b, N + 1) |> collect
+    Δt = (b - a)/N
+    M = p - 1
+    J = fld(N, M)
+    η = zeros(N + 1)
+    η[1] = α
+
+    S = integration_matrix_equispaced(M)
+
+    for j in 0:(J-1)
+        # Prediction loop
+        for m in 1:M
+            k = j*M + m
+            η[k + 1] = η[k] + Δt*f(t[k], η[k])
+        end
+        # Correction loop
+        for _ in 2:p
+            η_old = copy(η)
+            for m in 1:M
+                k = j*M + m
+                η[k + 1] = η[k] + Δt*(f(t[k], η[k]) - f(t[k], η_old[k])) + Δt*sum(S[m + 1, i + 1]*f(t[j*M + i + 1], η_old[j*M + i + 1]) for i in 0:M)
+            end
+        end
+    end
+
+    return η
+end
+
 function IDC_RK2(f, a, b, α, N, p)
     # Initialise variables
     t = range(a, b, N + 1) |> collect
@@ -75,7 +105,6 @@ function IDC_RK2(f, a, b, α, N, p)
 
     return η
 end
-
 
 """ Integral deferred correction with a single group """
 function IDC_single_forward_euler(f, a, b, α, N, p)

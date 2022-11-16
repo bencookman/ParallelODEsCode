@@ -41,32 +41,6 @@ function IDC(f, a, b, α, N, p)
     return η
 end
 
-# Function to calculate closed Newton-Cotes Quadrature weights - FROM BRADLEYS CODE
-function newton_cotes_weights(t, n)
-    weights = zeros(n+1)
-    for j in 1:n+1
-        u = union(1:j-1, j+1:n+1)
-        coeff = [1, -t[u[1]]] / (t[j] - t[u[1]])
-        for l in 2:n
-            coeff = ([coeff; 0] - t[u[l]]*[0; coeff]) / (t[j] - t[u[l]])
-        end
-        evalb = sum((coeff ./ collect(n+1:-1:1)) .* t[end] .^ collect(n+1:-1:1))
-        evala = sum((coeff ./ collect(n+1:-1:1)) .* t[1] .^ collect(n+1:-1:1))
-        weights[j] = evalb - evala
-    end
-    return(weights)
-end
-
-# Function to approximately integrate a polynomial interpolation of f(u, t) using Newton-Cotes
-function newton_cotes_integration(t, n, f_pol)
-    int_hat = zeros(length(t))
-    for j in 2:length(t)
-        sub_t = [i*(t[j]-t[1])/n + t[1] for i in 0:n]
-        int_hat[j] = sum(f_pol.(sub_t) .* newton_cotes_weights(sub_t, n))
-    end
-    return(int_hat)
-end
-
 function IDC_test_func(f, y, α, t_end, p, N_array)
     t_plot = range(0, t_end, 1000) |> collect
     η_plot = y.(t_plot)
