@@ -4,23 +4,13 @@ include("ProjectTools.jl")
 
 using .ProjectTools
 
-function IDC_test_func(f, y, α, t_end, p, N_array)
-    # t_plot = range(0, t_end, 1000) |> collect
-    # η_plot = y.(t_plot)
+function IDC_test_func(f, y, α, t_end, p, N_array, K)
     Δt_array = t_end./N_array
     err_array = []
 
-    # plot_func = plot(
-    #     t_plot, η_plot,
-    #     ylimits=(0.2, 0.8), xlabel=L"t", ylabel=L"y"
-    # )
     for N in N_array
-        S = integration_matrix_legendre_inner(p)
-        η_out = SDC_FE(S, f, 0, t_end, α, N, p)
-        # plot!(
-            #     plot_func, t_in, η_out,
-            #     label=latexstring("N = $(N)")
-        # )
+        S = integration_matrix_equispaced(p - 1)
+        η_out = RIDC_FE_sequential(S, f, 0, t_end, α, N, K, p)
 
         # Global error was weird, so try end local error
         t_in = range(0, t_end, N+1) |> collect
@@ -43,7 +33,7 @@ function IDC_test_func(f, y, α, t_end, p, N_array)
         )
     end
     dtstring = Dates.format(now(), "DY-m-d-TH-M-S")
-    fname = "Ben Code/output/tests/test-SDC_FE-$dtstring.png"
+    fname = "Ben Code/output/tests/test-RIDC_FE_sequential-$dtstring.png"
     savefig(plot_err, fname)
 end
 
@@ -54,13 +44,14 @@ test to see if it works at the specified order of accuracy.
 function IDC_test_1()
     α = 0.4
     t_end = 1.0
-    p = 3
-    N_array = (p + 1).*collect(3:3:100)
+    p = 2
+    K = p - 1 + 1
+    N_array = K.*collect(3:3:100)
     # N_array_single = collect(4:20)
 
     grad_func(t, y) = (y-2t*y^2)/(1+t)
     exact_func(t) = (1+t)/(t^2+1/α)
-    IDC_test_func(grad_func, exact_func, α, t_end, p, N_array)
+    IDC_test_func(grad_func, exact_func, α, t_end, p, N_array, K)
 end
 
 """

@@ -50,17 +50,17 @@ function integration_matrix_equispaced(N::Int)
     return integration_matrix(t)
 end
 
-function integration_matrix_legendre_inner(N::Int)
+function integration_matrix_legendre(N::Int, t_part::Array{T}) where T
     scipy_interpolate = pyimport("scipy.interpolate")
 
     # Calculate anti-derivatives of polynomial interpolants
     q_func = []
     gl_quad = gausslegendre(N)
-    t = gl_quad[1]              # Legendre nodes in [-1, 1]
+    t_quad = gl_quad[1]              # Legendre nodes in [-1, 1]
     for i in 1:N
         yᵢ = zeros(Float64, N)
         yᵢ[i] = 1.0
-        pᵢ_coeffs = scipy_interpolate.lagrange(t, yᵢ).c |> reverse              # Lagrange interpolant to yᵢ at x
+        pᵢ_coeffs = scipy_interpolate.lagrange(t_quad, yᵢ).c |> reverse              # Lagrange interpolant to yᵢ at x
         qᵢ_coeffs = pᵢ_coeffs ./ collect(1.0:length(pᵢ_coeffs))                 # Anti-derivative of pᵢ
         qᵢ_func(x) = sum(qᵢⱼ*x^Float64(j) for (j, qᵢⱼ) in enumerate(qᵢ_coeffs))
         push!(q_func, qᵢ_func)
@@ -68,9 +68,13 @@ function integration_matrix_legendre_inner(N::Int)
     # Use anti-derivatives to evaluate integration matrix. These are integrals
     # between nodes in our subinterval for each polynomial antiderivate 'basis'
     # vector.
-    t_closed = vcat(-1, t, 1)
-    return [qᵢ_func(t_closed[i + 1]) - qᵢ_func(t_closed[i]) for i in 1:(N + 1), qᵢ_func in q_func]
+    return [qᵢ_func(t_part[i + 1]) - qᵢ_func(t_part[i]) for i in 1:(N + 1), qᵢ_func in q_func]
 end
+function integration_matrix_legendre(N::Int)
+    gl_quad = gausslegendre(N)
+    integration_matrix_legendre(N, vcat(-1, gl_quad[1], 1))
+end
+
 
 """
 Algorithm from https://doi.org/10.1137/09075740X
@@ -275,7 +279,7 @@ function RIDC_FE_sequential(S, f, a, b, α, N, K, p)
 
     for j in 0:(J-1)
         # Prediction loop
-        for m in 1:M
+        for m in 1:K
             k = j*K + m
             η[k + 1] = η[k] + Δt*f(t[k], η[k])
         end
@@ -285,13 +289,13 @@ function RIDC_FE_sequential(S, f, a, b, α, N, K, p)
             for m in 1:M
                 k = j*K + m
                 I = (j*K + 1):(j*K + M + 1)
-                ∫fₖ = dot(S[m, I], f.(t[I], η_old[I]))
+                ∫fₖ = dot(S[m, :], f.(t[I], η_old[I]))
                 η[k + 1] = η[k] + Δt*(f(t[k], η[k]) - f(t[k], η_old[k])) + Δt*∫fₖ
             end
             for m in (M + 1):K
                 k = j*K + m
-                I = (j*K + m - M):(j*K + m)
-                ∫fₖ = dot(S[M, I], f.(t[I], η_old[I]))
+                I = (k - M):k
+                ∫fₖ = dot(S[end, :], f.(t[I], η_old[I]))
                 η[k + 1] = η[k] + Δt*(f(t[k], η[k]) - f(t[k], η_old[k])) + Δt*∫fₖ
             end
         end
@@ -330,13 +334,13 @@ function RIDC_FE_sequential_reduced_stencil(S::Array{Matrix{Float64}}, f, a, b, 
             for m in 1:M
                 k = j*K + m
                 I = (j*K + 1):(j*K + M + 1)
-                ∫fₖ = dot(S[l][m, I], f.(t[I], η_old[I]))
+                ∫fₖ = dot(S[l][m, :], f.(t[I], η_old[I]))
                 η[k + 1] = η[k] + Δt*(f(t[k], η[k]) - f(t[k], η_old[k])) + Δt*∫fₖ
             end
             for m in (M + 1):K
                 k = j*K + m
                 I = (j*K + m - M):(j*K + m)
-                ∫fₖ = dot(S[l][M, I], f.(t[I], η_old[I]))
+                ∫fₖ = dot(S[l][M, :], f.(t[I], η_old[I]))
                 η[k + 1] = η[k] + Δt*(f(t[k], η[k]) - f(t[k], η_old[k])) + Δt*∫fₖ
             end
         end
