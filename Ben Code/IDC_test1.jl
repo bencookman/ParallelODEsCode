@@ -4,160 +4,34 @@ include("ProjectTools.jl")
 
 using .ProjectTools
 
-"""
-Algorithm from https://doi.org/10.1137/09075740X
-This code is horrible and very un-Julia for the sake of matching the algorithm
-in the above paper as closely as possible. A refactored version will be made in
-time. Note indexing used for vectors in given algorithm starts at 0 but Julia
-starts at 1.
-This algorithm is very specific to equidistant nodes. Not so specific to choice
-of integrating scheme.
-"""
-function IDC_forward_euler(f, a, b, α, N, p)
-    # Initialise variables
-    t = range(a, b, N + 1) |> collect
-    Δt = (b - a)/N
-    M = p - 1
-    J = fld(N, M)
-    η = zeros(N + 1)
-    η[1] = α
-
-    S = integration_matrix_equispaced(M)
-
-    for j in 0:(J-1)
-        # Prediction loop
-        for m in 1:M
-            k = j*M + m
-            η[k + 1] = η[k] + Δt*f(t[k], η[k])
-        end
-        # Correction loop
-        for _ in 2:p
-            η_old = copy(η)
-            for m in 1:M
-                k = j*M + m
-                η[k + 1] = η[k] + Δt*(f(t[k], η[k]) - f(t[k], η_old[k])) + Δt*sum(S[m + 1, i + 1]*f(t[j*M + i + 1], η_old[j*M + i + 1]) for i in 0:M)
-            end
-        end
-    end
-
-    return η
-end
-
-function IDC_forward_euler_single_legendre(f, a, b, α, N, p)
-    # Initialise variables
-    t = range(a, b, N + 1) |> collect
-    Δt = (b - a)/N
-    M = p - 1
-    J = fld(N, M)
-    η = zeros(N + 1)
-    η[1] = α
-
-    S = integration_matrix_equispaced(M)
-
-    for j in 0:(J-1)
-        # Prediction loop
-        for m in 1:M
-            k = j*M + m
-            η[k + 1] = η[k] + Δt*f(t[k], η[k])
-        end
-        # Correction loop
-        for _ in 2:p
-            η_old = copy(η)
-            for m in 1:M
-                k = j*M + m
-                η[k + 1] = η[k] + Δt*(f(t[k], η[k]) - f(t[k], η_old[k])) + Δt*sum(S[m + 1, i + 1]*f(t[j*M + i + 1], η_old[j*M + i + 1]) for i in 0:M)
-            end
-        end
-    end
-
-    return η
-end
-
-function IDC_RK2(f, a, b, α, N, p)
-    # Initialise variables
-    t = range(a, b, N + 1) |> collect
-    Δt = (b - a)/N
-    M = p - 1
-    J = fld(N, M)
-    η = zeros(N + 1)
-    η[1] = α
-
-    S = integration_matrix_equispaced(M)
-
-    for j in 0:(J-1)
-        # Prediction loop
-        for m in 1:M
-            k = j*M + m
-            η[k + 1] = η[k] + 0.5Δt*(f(t[k], η[k]) + f(t[k + 1], η[k] + Δt*f(t[k], η[k])))
-        end
-        # Correction loop
-        for _ in 2:fld(p, 2)
-            η_old = copy(η)
-            for m in 1:M
-                k = j*M + m
-                ∫fₖ = sum(S[m, i]*f(t[j*M + i], η_old[j*M + i]) for i in 1:(M + 1))
-                K₁ = f(t[k], η[k]) - f(t[k], η_old[k])
-                K₂ = f(t[k + 1], η[k] + Δt*(K₁ + ∫fₖ)) - f(t[k + 1], η_old[k + 1])
-                η[k + 1] = η[k] + Δt*(0.5K₁ + 0.5K₂ + ∫fₖ)
-            end
-        end
-    end
-
-    return η
-end
-
-""" Integral deferred correction with a single group """
-function IDC_single_forward_euler(f, a, b, α, N, p)
-    # Initialise variables
-    t = range(a, b, N+1) |> collect
-    Δt = (b - a)/N
-    η = zeros(N+1)
-    η[1] = α
-
-    S = integration_matrix_equispaced(N)
-
-    # Prediction loop
-    for m in 1:N
-        η[m + 1] = η[m] + Δt*f(t[m], η[m])
-    end
-    # Correction loop
-    for _ in 2:p
-        η_old = copy(η)
-        for m in 1:N
-            η[m + 1] = η[m] + Δt*(f(t[m], η[m]) - f(t[m], η_old[m])) + Δt*sum(S[m, i]*f(t[i], η_old[i]) for i in 1:(N + 1))
-        end
-    end
-
-    return η
-end
-
 function IDC_test_func(f, y, α, t_end, p, N_array)
-    t_plot = range(0, t_end, 1000) |> collect
-    η_plot = y.(t_plot)
+    # t_plot = range(0, t_end, 1000) |> collect
+    # η_plot = y.(t_plot)
     Δt_array = t_end./N_array
     err_array = []
 
-    plot_func = plot(
-        t_plot, η_plot,
-        ylimits=(0.2, 0.8), xlabel=L"t", ylabel=L"y"
-    )
+    # plot_func = plot(
+    #     t_plot, η_plot,
+    #     ylimits=(0.2, 0.8), xlabel=L"t", ylabel=L"y"
+    # )
     for N in N_array
-        t_in = range(0, t_end, N+1) |> collect
-        η_out = IDC_RK2(f, 0, t_end, α, N, p)
-        η_exact = y.(t_in)
-        plot!(
-            plot_func, t_in, η_out,
-            label=latexstring("N = $(N)")
-        )
+        S = integration_matrix_legendre_inner(p)
+        η_out = SDC_FE(S, f, 0, t_end, α, N, p)
+        # plot!(
+            #     plot_func, t_in, η_out,
+            #     label=latexstring("N = $(N)")
+        # )
 
         # Global error was weird, so try end local error
-        err = err_abs(η_exact, η_out)[end]
-        push!(err_array, err)
+        t_in = range(0, t_end, N+1) |> collect
+        η_exact = y.(t_in)
+        err = err_rel(η_exact, η_out)[end]
+        push!(err_array, (err <= 0.0) ? 1.0 : err)
     end
 
     plot_err = plot(
         Δt_array, err_array,
-        xscale=:log10, yscale=:log10, xlabel=L"Δt", ylabel=L"||E||",
+        xscale=:log10, yscale=:log10, xlabel=L"Δt", ylabel="||E||",
         markershape=:circle, label=latexstring("Approximate solution at \$p = $(p)\$"),
         key=:bottomright, size=(1600, 1200), thickness_scaling=2.0
     )
@@ -169,7 +43,7 @@ function IDC_test_func(f, y, α, t_end, p, N_array)
         )
     end
     dtstring = Dates.format(now(), "DY-m-d-TH-M-S")
-    fname = "Ben Code/output/tests/test-new-matrix-IDC_RK2-$dtstring.png"
+    fname = "Ben Code/output/tests/test-SDC_FE-$dtstring.png"
     savefig(plot_err, fname)
 end
 
@@ -180,8 +54,9 @@ test to see if it works at the specified order of accuracy.
 function IDC_test_1()
     α = 0.4
     t_end = 1.0
-    p = 4
-    N_array = (p - 1).*collect(3:3:100)
+    p = 3
+    N_array = (p + 1).*collect(3:3:100)
+    # N_array_single = collect(4:20)
 
     grad_func(t, y) = (y-2t*y^2)/(1+t)
     exact_func(t) = (1+t)/(t^2+1/α)
@@ -195,25 +70,25 @@ https://doi.org/10.1137/09075740X
 function IDC_test_2()
     α = 1.0
     t_end = 5.0
-    p = 4
-    N_array = (p - 1).*collect(2:3:100)
-    N_array_single = collect(3:15)
+    p = 6
+    N_array = (p + 1).*collect(10:10:1000)
+    # N_array_single = collect(2:15)
 
-    grad_func(t, y) = 4t*sqrt(y)
+    grad_func(t, y) = 4t*sqrt(Complex(y))
     exact_func(t) = (1 + t^2)^2
     IDC_test_func(grad_func, exact_func, α, t_end, p, N_array)
 end
 
 function IDC_test_3()
-    α = 1.0
+    α = 2.0
     t_end = 5.0
     p = 5
-    N_array = (p - 1).*collect(2:3:100)
-    N_array_single = collect(3:50)
+    # N_array = (p - 1).*collect(2:3:100)
+    N_array_single = collect(4:15)
 
     grad_func(t, y) = t^3
     exact_func(t) = 0.25*t^4 + α
-    IDC_test_func(grad_func, exact_func, α, t_end, p, N_array)
+    IDC_test_func(grad_func, exact_func, α, t_end, p, N_array_single)
 end
 
 
