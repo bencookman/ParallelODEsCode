@@ -8,8 +8,8 @@ function IDC_test_func(f, y, α, t_end, p, N_array, K)
     Δt_array = t_end./N_array
     err_array = []
 
+    S = integration_matrix_equispaced(p - 1)
     for N in N_array
-        S = integration_matrix_equispaced(p - 1)
         η_out = RIDC_FE_sequential(S, f, 0, t_end, α, N, K, p)
 
         # Global error was weird, so try end local error
@@ -44,7 +44,7 @@ test to see if it works at the specified order of accuracy.
 function IDC_test_1()
     α = 0.4
     t_end = 1.0
-    p = 2
+    p = 4
     K = p - 1 + 1
     N_array = K.*collect(3:3:100)
     # N_array_single = collect(4:20)
