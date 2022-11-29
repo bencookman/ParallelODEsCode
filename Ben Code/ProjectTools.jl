@@ -11,14 +11,17 @@ export
 
     integration_matrix,
     integration_matrix_equispaced,
-    integration_matrix_legendre_inner,
+    integration_matrix_legendre,
 
     IDC_FE,
+    IDC_FE_matrix,
     IDC_RK2,
     IDC_FE_single,
+    IDC_FE_single_matrix,
     SDC_FE,
     SDC_FE_single,
     RIDC_FE_sequential,
+    RIDC_FE_sequential_matrix,
     RIDC_FE_sequential_reduced_stencil
 
 err_abs(exact, approx) = abs.(exact - approx)
@@ -91,7 +94,7 @@ function IDC_FE(S, f, a, b, α, N, p)
     η = zeros(N + 1)
     η[1] = α
 
-    for j in 0:(J-1)
+    for j in 0:(J - 1)
         # Prediction loop
         for m in 1:M
             k = j*M + m
@@ -102,8 +105,8 @@ function IDC_FE(S, f, a, b, α, N, p)
             η_old = copy(η)
             for m in 1:M
                 k = j*M + m
-                I = (j*M + 1):(j*(M + 1) + 1)
-                ∫fₖ = dot(S[m, I], f.(t[I], η_old[I]))
+                I = (j*M + 1):((j + 1)*M+ 1)
+                ∫fₖ = dot(S[m, :], f.(t[I], η_old[I]))
                 η[k + 1] = η[k] + Δt*(f(t[k], η[k]) - f(t[k], η_old[k])) + Δt*∫fₖ
             end
         end
@@ -115,6 +118,40 @@ function IDC_FE(f, a, b, α, N, p)
     return IDC_FE(integration_matrix_equispaced(p - 1), f, a, b, α, N, p)
 end
 
+"""
+Same algorithm as 'IDC_FE' but storing all prediction and correction
+levels in a matrix output. This is useful for calculating stability regions at
+different correction stages.
+"""
+function IDC_FE_matrix(S, f, a, b, α, N, p)
+    # Initialise variables
+    t = range(a, b, N + 1) |> collect
+    Δt = (b - a)/N
+    M = p - 1
+    J = fld(N, M)
+    η = zeros(Complex, N + 1, p)
+    η[1, :] .= α
+
+    for j in 0:(J - 1)
+        # Prediction loop
+        for m in 1:M
+            k = j*M + m
+            η[k + 1, 1] = η[k, 1] + Δt*f(t[k], η[k, 1])
+        end
+        # Correction loop
+        for l in 2:p
+            for m in 1:M
+                k = j*M + m
+                I = (j*M + 1):((j + 1)*M + 1)
+                ∫fₖ = dot(S[m, :], f.(t[I], η[I, l - 1]))
+                η[k + 1, l] = η[k, l] + Δt*(f(t[k], η[k, l]) - f(t[k], η[k, l - 1])) + Δt*∫fₖ
+            end
+        end
+    end
+
+    return η
+end
+
 function IDC_RK2(S, f, a, b, α, N, p)
     # Initialise variables
     t = range(a, b, N + 1) |> collect
@@ -124,18 +161,19 @@ function IDC_RK2(S, f, a, b, α, N, p)
     η = zeros(N + 1)
     η[1] = α
 
-    for j in 0:(J-1)
+    for j in 0:(J - 1)
         # Prediction loop
         for m in 1:M
             k = j*M + m
             η[k + 1] = η[k] + 0.5Δt*(f(t[k], η[k]) + f(t[k + 1], η[k] + Δt*f(t[k], η[k])))
         end
         # Correction loop
+        I = (j*M + 1):((j + 1)*M + 1)   # Quadrature nodes
         for _ in 2:fld(p, 2)
             η_old = copy(η)
             for m in 1:M
                 k = j*M + m
-                ∫fₖ = sum(S[m, i]*f(t[j*M + i], η_old[j*M + i]) for i in 1:(M + 1))
+                ∫fₖ = dot(S[m, :], f.(t[I], η_old[I]))
                 K₁ = f(t[k], η[k]) - f(t[k], η_old[k])
                 K₂ = f(t[k + 1], η[k] + Δt*(K₁ + ∫fₖ)) - f(t[k + 1], η_old[k + 1])
                 η[k + 1] = η[k] + Δt*(0.5K₁ + 0.5K₂ + ∫fₖ)
@@ -157,9 +195,9 @@ rolling usage of interpolation nodes.
 """
 function IDC_FE_single(S, f, a, b, α, N, p)
     # Initialise variables
-    t = range(a, b, N+1) |> collect
+    t = range(a, b, N + 1) |> collect
     Δt = (b - a)/N
-    η = zeros(N+1)
+    η = zeros(N + 1)
     η[1] = α
 
     # Prediction loop
@@ -167,10 +205,12 @@ function IDC_FE_single(S, f, a, b, α, N, p)
         η[m + 1] = η[m] + Δt*f(t[m], η[m])
     end
     # Correction loop
+    I = 1:(N + 1)
     for _ in 2:p
         η_old = copy(η)
         for m in 1:N
-            η[m + 1] = η[m] + Δt*(f(t[m], η[m]) - f(t[m], η_old[m])) + Δt*sum(S[m, i]*f(t[i], η_old[i]) for i in 1:(N + 1))
+            ∫fₖ = dot(S[m, :], f.(t[I], η_old[I]))
+            η[m + 1] = η[m] + Δt*(f(t[m], η[m]) - f(t[m], η_old[m])) + Δt*∫fₖ
         end
     end
 
@@ -178,6 +218,34 @@ function IDC_FE_single(S, f, a, b, α, N, p)
 end
 function IDC_FE_single(f, a, b, α, N, p)
     return IDC_FE_single(integration_matrix_equispaced(N), f, a, b, α, N, p)
+end
+
+"""
+Same algorithm as 'IDC_FE_single' but storing all prediction and correction
+levels. This is useful for calculating stability regions at different correction
+stages.
+"""
+function IDC_FE_single_matrix(S, f, a, b, α, N, p)
+    # Initialise variables
+    t = range(a, b, N + 1) |> collect
+    Δt = (b - a)/N
+    η = zeros(N + 1, p)
+    η[1, :] .= α
+
+    # Prediction loop
+    for m in 1:N
+        η[m + 1, 1] = η[m, 1] + Δt*f(t[m], η[m, 1])
+    end
+    # Correction loop
+    I = 1:(N + 1)
+    for l in 2:p
+        for m in 1:N
+            ∫fₖ = dot(S[m, :], f.(t[I], η[I, l - 1]))
+            η[m + 1, l] = η[m, l] + Δt*(f(t[m], η[m, l]) - f(t[m], η[m, l - 1])) + Δt*∫fₖ
+        end
+    end
+
+    return η
 end
 
 """
@@ -206,12 +274,11 @@ function SDC_FE(S, f, a, b, α, N, p)
             η[k + 1] = η[k] + Δt[k]*f(t[k], η[k])
         end
         # Correction loop
-        I = (j*M + 2):((j + 1)*M)
+        I = (j*M + 2):((j + 1)*M)   # Use non-endpoint nodes for quadrature
         for _ in 2:p
             η_old = copy(η)
             for m in 1:M
                 k = j*M + m
-                # Only those in the middle of the subinterval are legendre nodes
                 ∫fₖ = dot(S[m, :], f.(t[I], η_old[I]))*int_scale/2
                 η[k + 1] = η[k] + Δt[k]*(f(t[k], η[k]) - f(t[k], η_old[k])) + ∫fₖ
             end
@@ -246,11 +313,10 @@ function SDC_FE_single(S, f, a, b, α, N, p)
         η[k + 1] = η[k] + Δt[k]*f(t[k], η[k])
     end
     # Correction loop
-    I = 2:N
+    I = 2:N     # Use non-endpoint nodes for quadrature
     for _ in 2:p
         η_old = copy(η)
         for k in 1:N
-            # Use non-endpoint nodes for quadrature
             ∫fₖ = dot(S[k, :], f.(t[I], η_old[I]))*(b - a)/2
             η[k + 1] = η[k] + Δt[k]*(f(t[k], η[k]) - f(t[k], η_old[k])) + ∫fₖ
         end
@@ -294,8 +360,8 @@ function RIDC_FE_sequential(S, f, a, b, α, N, K, p)
             end
             for m in (M + 1):K
                 k = j*K + m
-                I = (k - M):k
-                ∫fₖ = dot(S[end, :], f.(t[I], η_old[I]))
+                I = (k + 1 - M):(k + 1)
+                ∫fₖ = dot(S[M, :], f.(t[I], η_old[I]))
                 η[k + 1] = η[k] + Δt*(f(t[k], η[k]) - f(t[k], η_old[k])) + Δt*∫fₖ
             end
         end
@@ -305,6 +371,41 @@ function RIDC_FE_sequential(S, f, a, b, α, N, K, p)
 end
 function RIDC_FE_sequential(f, a, b, α, N, K, p)
     return RIDC_FE_sequential(integration_matrix_equispaced(p - 1), f, a, b, α, N, K, p)
+end
+
+function RIDC_FE_sequential_matrix(S, f, a, b, α, N, K, p)
+    # Initialise variables
+    t = range(a, b, N + 1) |> collect
+    Δt = (b - a)/N
+    M = p - 1
+    J = fld(N, K)
+    η = zeros(Complex, N + 1, p)
+    η[1, :] .= α
+
+    for j in 0:(J-1)
+        # Prediction loop
+        for m in 1:K
+            k = j*K + m
+            η[k + 1, 1] = η[k, 1] + Δt*f(t[k], η[k, 1])
+        end
+        # Correction loop
+        for l in 2:p
+            for m in 1:M
+                k = j*K + m
+                I = (j*K + 1):(j*K + M + 1)
+                ∫fₖ = dot(S[m, :], f.(t[I], η[I, l - 1]))
+                η[k + 1, l] = η[k, l] + Δt*(f(t[k], η[k, l]) - f(t[k], η[k, l - 1])) + Δt*∫fₖ
+            end
+            for m in (M + 1):K
+                k = j*K + m
+                I = (k + 1 - M):(k + 1)
+                ∫fₖ = dot(S[M, :], f.(t[I], η[I, l - 1]))
+                η[k + 1, l] = η[k, l] + Δt*(f(t[k], η[k, l]) - f(t[k], η[k, l - 1])) + Δt*∫fₖ
+            end
+        end
+    end
+
+    return η
 end
 
 """
@@ -352,5 +453,4 @@ function RIDC_FE_sequential_reduced_stencil(f, a, b, α, N, K, p)
     S = [integration_matrix_equispaced(l) for l in 1:(p - 1)]
     return RIDC_FE_sequential_reduced_stencil(S, f, a, b, α, N, K, p)
 end
-
 end
