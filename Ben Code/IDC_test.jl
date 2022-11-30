@@ -8,9 +8,9 @@ function IDC_test_func(f, y, α, t_end, p, N_array, K)
     Δt_array = t_end./N_array
     err_array = []
 
+    S = integration_matrix_equispaced(p - 1)
     for N in N_array
-        S = integration_matrix_equispaced(p - 1)
-        η_approx = IDC_FE_matrix(S, f, 0, t_end, α, N, p)
+        η_approx = RIDC_FE_sequential(S, f, 0, t_end, α, N, K, p)
         η_out = η_approx[:, end]
 
         t_in = range(0, t_end, N + 1) |> collect
@@ -33,7 +33,7 @@ function IDC_test_func(f, y, α, t_end, p, N_array, K)
         )
     end
     dtstring = Dates.format(now(), "DY-m-d-TH-M-S")
-    fname = "Ben Code/output/tests/test-IDC_FE_matrix-$dtstring.png"
+    fname = "Ben Code/output/test-RIDC_FE_sequential-$dtstring.png"
     savefig(plot_err, fname)
 end
 
@@ -44,14 +44,14 @@ test to see if it works at the specified order of accuracy.
 function IDC_test_1()
     α = 0.4
     t_end = 1.0
-    p = 3
-    # K = 100
-    N_array = (p - 1).*collect(1:4:100)
+    p = 6
+    K = 60
+    N_array = K.*collect(1:50)
     # N_array_single = collect(4:20)
 
     grad_func(t, y) = (y-2t*y^2)/(1+t)
     exact_func(t) = (1+t)/(t^2+1/α)
-    IDC_test_func(grad_func, exact_func, α, t_end, p, N_array, 0)
+    IDC_test_func(grad_func, exact_func, α, t_end, p, N_array, K)
 end
 
 """
@@ -62,12 +62,12 @@ function IDC_test_2()
     α = 1.0
     t_end = 5.0
     p = 6
-    N_array = (p + 1).*collect(10:10:1000)
+    N_array = (p + 1).*collect(1:4:100)
     # N_array_single = collect(2:15)
 
     grad_func(t, y) = 4t*sqrt(Complex(y))
     exact_func(t) = (1 + t^2)^2
-    IDC_test_func(grad_func, exact_func, α, t_end, p, N_array)
+    IDC_test_func(grad_func, exact_func, α, t_end, p, N_array, 0)
 end
 
 function IDC_test_3()

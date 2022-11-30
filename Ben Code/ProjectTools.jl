@@ -267,7 +267,7 @@ function SDC_FE(S, f, a, b, α, N, p)
     t = vcat(t, b)
     Δt = t[2:end] .- t[1:end - 1]    # No longer constant
 
-    for j in 0:(J-1)
+    for j in 0:(J - 1)
         # Prediction loop
         for m in 1:M
             k = j*M + m
