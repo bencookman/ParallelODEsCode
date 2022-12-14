@@ -99,5 +99,6 @@ display(p)
 
 orders = diff(log_errors) ./ diff(log_hs)
 order_table = DataFrame(N_Intervals = n_interval, Error = errors, Order = ["   -  "; orders])
+display(order_table)
 
 CSV.write("RIDC RK2-RK2 Order Table.csv", order_table)
