@@ -2,6 +2,8 @@ using Plots
 using DataFrames
 using CSV
 
+cd(@__DIR__)
+
 function lagrange_weights(nodes)
     k = length(nodes)
     weights = zeros(Float64, k-1, k)
