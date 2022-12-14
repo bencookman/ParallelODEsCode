@@ -2,6 +2,8 @@ using Plots
 using DataFrames
 using CSV
 
+cd(@__DIR__)
+
 function lagrange_weights(nodes)
     k = length(nodes)
     weights = zeros(Float64, k-1, k)
@@ -98,4 +100,4 @@ display(p)
 orders = diff(log_errors) ./ diff(log_hs)
 order_table = DataFrame(N_Intervals = n_interval, Error = errors, Order = ["   -  "; orders])
 
-CSV.write("RIDC Euler-Euler Order Table.csv", order_table)
+CSV.write("RIDC RK2-RK2 Order Table.csv", order_table)
