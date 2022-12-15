@@ -39,7 +39,7 @@ end
 # Boundary Conditions
 # Periodic boundary with period 2π
 
-# Pseudo-Spectral Method Solution (Euler Method Time Integration)
+# Pseudo-Spectral Method Solution (Heun's Method Time Integration)
 
 N_POINTS = 100
 KINEMATIC_VISCOSITY = 0.5
