@@ -223,7 +223,7 @@ function main()
             frame(anim, heatmap(x_range, y_range, vorticities[:, :, end, end]', c=:diverging_bkr_55_10_c35_n256, aspect_ratio = :equal, size = (680, 650)))
         end
     end
-    display(gif(anim, "2D Navier-Stokes-RIDC.gif", fps = 2))
+    display(gif(anim, "2D-Navier-Stokes-RIDC-Euler.gif", fps = 2))
 end
 
 main()
