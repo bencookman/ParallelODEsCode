@@ -4,16 +4,17 @@ include("ProjectTools.jl")
 
 using .ProjectTools
 
-function IDC_test_func(f, y, α, t_end, p, N_array, K)
-    Δt_array = t_end./N_array
+# function IDC_test_func(f, y, α, t_end, p, N_array, K)
+function IDC_test_func(ODE_system::ODESystem, p, K, N_array)
+    @unpack_ODESystem ODE_system
+    Δt_array = (t_e - t_s)./N_array
     err_array = []
 
     S = integration_matrix_equispaced(p - 1)
     for N in N_array
-        η_approx = RIDC_FE_sequential(S, f, 0, t_end, α, N, K, p)
+        (t_in, η_approx) = RIDC_FE_sequential(S, f, t_s, t_e, y_s, N, K, p)
         η_out = η_approx[:, end]
 
-        t_in = range(0, t_end, N + 1) |> collect
         η_exact = y.(t_in)
         err = err_rel(η_exact, η_out)[end]
         push!(err_array, (err <= 0.0) ? 1.0 : err)
@@ -33,53 +34,53 @@ function IDC_test_func(f, y, α, t_end, p, N_array, K)
         )
     end
     dtstring = Dates.format(now(), "DY-m-d-TH-M-S")
-    fname = "Ben Code/output/test-RIDC_FE_sequential-$dtstring.png"
+    fname = "Ben Code/output/convergence/convergence-RIDC_FE_sequential-$dtstring.png"
     savefig(plot_err, fname)
+    # display(plot_err)
 end
 
-"""
-Taken from page 53 of Numerical Methods for ODEs by J C Butcher. This is just a
-test to see if it works at the specified order of accuracy.
-"""
+
+""" Taken from page 53 of Numerical Methods for ODEs by J C Butcher """
+const Butcher_p53_system = ODESystem(
+    (t, y) -> (y - 2t*y^2)/(1 + t),
+    t -> (1 + t)/(t^2 + 1/0.4),
+    0.4,
+    1.0
+)
+""" https://doi.org/10.1137/09075740X """
+const sqrt_system = ODESystem(
+    (t, y) -> 4t*sqrt(Complex(y)),
+    t -> (1 + t^2)^2,
+    1.0,
+    5.0
+)       
+const cube_system = ODESystem(
+    (t, y) -> t^3,
+    t -> 0.25*t^4 + 2.0,
+    2.0,
+    5.0
+)
+
 function IDC_test_1()
-    α = 0.4
-    t_end = 1.0
-    p = 6
-    K = 60
-    N_array = K.*collect(1:50)
-    # N_array_single = collect(4:20)
-
-    grad_func(t, y) = (y-2t*y^2)/(1+t)
-    exact_func(t) = (1+t)/(t^2+1/α)
-    IDC_test_func(grad_func, exact_func, α, t_end, p, N_array, K)
+    p = 4
+    K = 3
+    J = collect(1:3:100)
+    IDC_test_func(Butcher_p53_system, p, K, K.*J)
 end
 
-"""
-Another test
-https://doi.org/10.1137/09075740X
-"""
 function IDC_test_2()
-    α = 1.0
-    t_end = 5.0
     p = 6
-    N_array = (p + 1).*collect(1:4:100)
-    # N_array_single = collect(2:15)
-
-    grad_func(t, y) = 4t*sqrt(Complex(y))
-    exact_func(t) = (1 + t^2)^2
-    IDC_test_func(grad_func, exact_func, α, t_end, p, N_array, 0)
+    K = 100
+    J = collect(1:19)
+    IDC_test_func(sqrt_system, p, K, K.*J)
 end
 
 function IDC_test_3()
-    α = 2.0
-    t_end = 5.0
     p = 5
     # N_array = (p - 1).*collect(2:3:100)
     N_array_single = collect(4:15)
 
-    grad_func(t, y) = t^3
-    exact_func(t) = 0.25*t^4 + α
-    IDC_test_func(grad_func, exact_func, α, t_end, p, N_array_single)
+    IDC_test_func(cube_system, p, N_array_single)
 end
 
 

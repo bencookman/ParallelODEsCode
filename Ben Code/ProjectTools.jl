@@ -1,6 +1,11 @@
 module ProjectTools
 
-using LinearAlgebra, Statistics, PyCall, FastGaussQuadrature
+using
+    LinearAlgebra,
+    Statistics,
+    PyCall,
+    FastGaussQuadrature,
+    Parameters
 
 export
     err_abs,
@@ -9,26 +14,46 @@ export
     err_norm,
     err_max,
 
+    ODESystem,
+    @unpack_ODESystem,
+
     integration_matrix,
     integration_matrix_equispaced,
     integration_matrix_legendre,
 
     IDC_FE,
-    IDC_FE_matrix,
+    IDC_FE_correction_levels,
     IDC_RK2,
     IDC_FE_single,
-    IDC_FE_single_matrix,
+    IDC_FE_single_correction_levels,
     SDC_FE,
     SDC_FE_single,
     RIDC_FE_sequential,
-    RIDC_FE_sequential_matrix,
+    RIDC_FE_sequential_correction_levels,
     RIDC_FE_sequential_reduced_stencil
 
 err_abs(exact, approx) = abs.(exact - approx)
-err_rel(exact, approx) = err_abs(exact, approx) ./ exact
+err_rel(exact, approx) = err_abs(exact, approx) ./ abs.(exact)
 err_cum(exact, approx) = [sum(err_abs(exact[1:i], approx[1:i])) for i in 1:length(data_correct)]
 err_norm(exact, approx, p) = norm(err_abs(exact, approx), p)
 err_max(exact, approx)  = maximum(err_abs(exact, approx))
+
+"""
+Structure to contain a test ODE system. Contains:
+    f::Function - gradient function, y' = f(t, y)
+    y::Function - exact solution
+    y_s::Float64  - starting value y(t_s) = y_s
+    t_s::Float64  - start time, y(t_s) is the solution at the initial time
+    t_e::Float64  - end time, y(t_e) is the solution at the final time
+"""
+@with_kw struct ODESystem
+    f::Function
+    y::Function
+    y_s::Float64
+    t_s::Float64
+    t_e::Float64
+    ODESystem(f, y, y_s, t_e) = new(f, y, y_s, 0, t_e)
+end
 
 function integration_matrix(t::Array{T}) where T
     scipy_interpolate = pyimport("scipy.interpolate")
@@ -112,7 +137,7 @@ function IDC_FE(S, f, a, b, α, N, p)
         end
     end
 
-    return η
+    return (t, η)
 end
 function IDC_FE(f, a, b, α, N, p)
     return IDC_FE(integration_matrix_equispaced(p - 1), f, a, b, α, N, p)
@@ -123,7 +148,7 @@ Same algorithm as 'IDC_FE' but storing all prediction and correction
 levels in a matrix output. This is useful for calculating stability regions at
 different correction stages.
 """
-function IDC_FE_matrix(S, f, a, b, α, N, p)
+function IDC_FE_correction_levels(S, f, a, b, α, N, p)
     # Initialise variables
     t = range(a, b, N + 1) |> collect
     Δt = (b - a)/N
@@ -149,7 +174,7 @@ function IDC_FE_matrix(S, f, a, b, α, N, p)
         end
     end
 
-    return η
+    return (t, η)
 end
 
 function IDC_RK2(S, f, a, b, α, N, p)
@@ -181,7 +206,7 @@ function IDC_RK2(S, f, a, b, α, N, p)
         end
     end
 
-    return η
+    return (t, η)
 end
 function IDC_RK2(f, a, b, α, N, p)
     return IDC_RK2(integration_matrix_equispaced(p - 1), f, a, b, α, N, p)
@@ -214,7 +239,7 @@ function IDC_FE_single(S, f, a, b, α, N, p)
         end
     end
 
-    return η
+    return (t, η)
 end
 function IDC_FE_single(f, a, b, α, N, p)
     return IDC_FE_single(integration_matrix_equispaced(N), f, a, b, α, N, p)
@@ -225,11 +250,11 @@ Same algorithm as 'IDC_FE_single' but storing all prediction and correction
 levels. This is useful for calculating stability regions at different correction
 stages.
 """
-function IDC_FE_single_matrix(S, f, a, b, α, N, p)
+function IDC_FE_single_correction_levels(S, f, a, b, α, N, p)
     # Initialise variables
     t = range(a, b, N + 1) |> collect
     Δt = (b - a)/N
-    η = zeros(N + 1, p)
+    η = zeros(Complex, N + 1, p)
     η[1, :] .= α
 
     # Prediction loop
@@ -237,15 +262,14 @@ function IDC_FE_single_matrix(S, f, a, b, α, N, p)
         η[m + 1, 1] = η[m, 1] + Δt*f(t[m], η[m, 1])
     end
     # Correction loop
-    I = 1:(N + 1)
     for l in 2:p
         for m in 1:N
-            ∫fₖ = dot(S[m, :], f.(t[I], η[I, l - 1]))
+            ∫fₖ = dot(S[m, :], f.(t[:], η[:, l - 1]))
             η[m + 1, l] = η[m, l] + Δt*(f(t[m], η[m, l]) - f(t[m], η[m, l - 1])) + Δt*∫fₖ
         end
     end
 
-    return η
+    return (t, η)
 end
 
 """
@@ -285,7 +309,7 @@ function SDC_FE(S, f, a, b, α, N, p)
         end
     end
 
-    return η
+    return (t, η)
 end
 """
 In order for our quadrature to have sufficient order by the last correction
@@ -322,7 +346,7 @@ function SDC_FE_single(S, f, a, b, α, N, p)
         end
     end
 
-    return η
+    return (t, η)
 end
 function SDC_FE_single(f, a, b, α, N, p)
     return SDC_FE(integration_matrix_legendre(N - 1), f, a, b, α, N, p)
@@ -340,7 +364,7 @@ function RIDC_FE_sequential(S, f, a, b, α, N, K, p)
     Δt = (b - a)/N
     M = p - 1
     J = fld(N, K)
-    η = zeros(N + 1)
+    η = zeros(Complex, N + 1)
     η[1] = α
 
     for j in 0:(J-1)
@@ -367,13 +391,13 @@ function RIDC_FE_sequential(S, f, a, b, α, N, K, p)
         end
     end
 
-    return η
+    return (t, η)
 end
 function RIDC_FE_sequential(f, a, b, α, N, K, p)
     return RIDC_FE_sequential(integration_matrix_equispaced(p - 1), f, a, b, α, N, K, p)
 end
 
-function RIDC_FE_sequential_matrix(S, f, a, b, α, N, K, p)
+function RIDC_FE_sequential_correction_levels(S, f, a, b, α, N, K, p)
     # Initialise variables
     t = range(a, b, N + 1) |> collect
     Δt = (b - a)/N
@@ -405,7 +429,7 @@ function RIDC_FE_sequential_matrix(S, f, a, b, α, N, K, p)
         end
     end
 
-    return η
+    return (t, η)
 end
 
 """
@@ -447,7 +471,7 @@ function RIDC_FE_sequential_reduced_stencil(S::Array{Matrix{Float64}}, f, a, b, 
         end
     end
 
-    return η
+    return (t, η)
 end
 function RIDC_FE_sequential_reduced_stencil(f, a, b, α, N, K, p)
     S = [integration_matrix_equispaced(l) for l in 1:(p - 1)]
