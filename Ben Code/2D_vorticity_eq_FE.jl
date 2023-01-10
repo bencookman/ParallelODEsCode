@@ -1,7 +1,7 @@
 using FFTW
 
 """ UNFINISHED """
-function vorticity_equation_specctral_FE(;
+function vorticity_equation_spectral_FE(;
     nu=0.1,
     t_e=10.0,
     N_space=2^8,
@@ -42,7 +42,7 @@ function vorticity_equation_specctral_FE(;
         k² = k_x^2 + k_y^2
         return - u_conv - v_conv - nu.*k².*w_fft
     end
-    @showprogress "Time stepping..." for _ in t[1:end - 1]
+    @showprogress "Time stepping..." for _ in t_coords[1:end - 1]
         # Forward Euler time step
         w_fft .+= Δt.*f(nu, k_x, k_y, u, v, w_fft)
 
@@ -54,6 +54,5 @@ function vorticity_equation_specctral_FE(;
         push!(v_return, v)
     end
 
-
     return (t_coords, x_coords, y_coords, u_return, v_return, w_return)
-end mod
+end
