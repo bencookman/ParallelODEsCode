@@ -17,6 +17,11 @@ export
     ODESystem,
     @unpack_ODESystem,
 
+    RKMethod,
+    @unpack_RKMethod,
+    RK_time_step_explicit,
+    RK4_standard,
+
     integration_matrix,
     integration_matrix_equispaced,
     integration_matrix_legendre,
@@ -40,11 +45,11 @@ err_max(exact, approx)  = maximum(err_abs(exact, approx))
 
 """
 Structure to contain a test ODE system. Contains:
-    f::Function - gradient function, y' = f(t, y)
-    y::Function - exact solution
-    y_s::Float64  - starting value y(t_s) = y_s
-    t_s::Float64  - start time, y(t_s) is the solution at the initial time
-    t_e::Float64  - end time, y(t_e) is the solution at the final time
+    f::Function  - gradient function, y' = f(t, y)
+    y::Function  - exact solution
+    y_s::Float64 - starting value y(t_s) = y_s
+    t_s::Float64 - start time, y(t_s) is the solution at the initial time
+    t_e::Float64 - end time, y(t_e) is the solution at the final time
 """
 @with_kw struct ODESystem
     f::Function
@@ -54,6 +59,82 @@ Structure to contain a test ODE system. Contains:
     t_e::Float64
     ODESystem(f, y, y_s, t_e) = new(f, y, y_s, 0, t_e)
 end
+
+"""
+Represents an arbitrary Runge-Kutta method using its Butcher Tableau. Contains:
+    a::Array{T, 2} - coefficients of summations of kⱼ terms in calculation of kᵣ
+    b::Array{T, 1} - coefficients of summations of kⱼ terms in calculation of y_{i+1}
+    c::Array{T, 1} - coefficients of time step in calculation of kᵣ
+Note: First dimension of a must match length of c and second dimension of a must
+match length of b.
+"""
+@with_kw struct RKMethod
+    a::Array{<:Real, 2}
+    b::Array{<:Real, 1}
+    c::Array{<:Real, 1}
+    function RKMethod(a, b, c)
+        (length(axes(a)[1]) == length(axes(c)[1])) || error("a and c axes do not match")
+        (length(axes(a)[2]) == length(axes(b)[1])) || error("a and b axes do not match")
+        return new(a, b, c)
+    end
+end
+
+""" Canonical RK4 method. """
+RK4_standard = RKMethod(
+    a = [
+        0//1  0//1  0//1  0//1;
+        1//2  0//1  0//1  0//1;
+        0//1  1//2  0//1  0//1;
+        0//1  0//1  1//1  0//1
+    ], b = [
+        1//6, 1//3, 1//3, 1//6
+    ], c = [
+        0//1, 1//2, 1//2, 1//1
+    ]
+)
+
+"""
+Perform a single explicit Runge-Kutta time step using scheme given:
+
+u_{i+1} = uᵢ + Δt⋅∑bᵣ⋅kᵣ, where
+kᵣ = f(tᵢ + cᵣ⋅Δt, uᵢ + Δt⋅∑aᵣₗ⋅kₗ, other_coords)
+
+( k̲ = [k₁, k₂, ..., kₛ] )
+
+Note how extra coordinates in the system, e.g. x and y, are to be bundled together in
+vector as argument other_coords.
+"""
+function RK_time_step_explicit(
+    f̲::Function,
+    Δt::Float64,
+    t_i::Float64,
+    u_i,
+    other_coords;
+    RK_method::RKMethod = RK4_standard
+)
+    @unpack_RKMethod RK_method
+
+    k̲ = [f̲(t_i, u_i, other_coords)]
+    for r in axes(b)[1][2:end]
+        k̲_sum = begin
+            val = zeros(typeof(u_i[1]), size(u_i))
+            for l in axes(b)[1][1]:(r - 1)
+                val .+= a[r, l].*k̲[l]
+            end
+            val
+        end
+        push!(k̲,
+              f̲(t_i + c[r]*Δt, u_i .+ Δt.*k̲_sum, other_coords))
+    end
+    return Δt.*begin
+        val = zeros(typeof(u_i[1]), size(u_i))
+        for r in axes(b)[1]
+            val .+= b[r].*k̲[r]
+        end
+        val
+    end
+end
+
 
 function integration_matrix(t::Array{T}) where T
     scipy_interpolate = pyimport("scipy.interpolate")

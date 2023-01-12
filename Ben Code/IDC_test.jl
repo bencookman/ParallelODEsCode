@@ -34,7 +34,7 @@ function IDC_test_func(ODE_system::ODESystem, p, K, N_array)
         )
     end
     dtstring = Dates.format(now(), "DY-m-d-TH-M-S")
-    fname = "Ben Code/output/convergence/convergence-RIDC_FE_sequential-$dtstring.png"
+    fname = "Ben Code/output/convergence/$dtstring-convergence-RIDC_FE_sequential.png"
     savefig(plot_err, fname)
     # display(plot_err)
 end
@@ -53,7 +53,7 @@ const sqrt_system = ODESystem(
     t -> (1 + t^2)^2,
     1.0,
     5.0
-)       
+)
 const cube_system = ODESystem(
     (t, y) -> t^3,
     t -> 0.25*t^4 + 2.0,
