@@ -21,6 +21,7 @@ export
     @unpack_RKMethod,
     RK_time_step_explicit,
     RK4_standard,
+    RK_forward_euler,
 
     integration_matrix,
     integration_matrix_equispaced,
@@ -92,6 +93,12 @@ RK4_standard = RKMethod(
         0//1, 1//2, 1//2, 1//1
     ]
 )
+""" Forward Euler method. """
+RK_forward_euler = RKMethod(
+    a = fill(0, 1, 1),
+    b = [0],
+    c = [1]
+)
 
 """
 Perform a single explicit Runge-Kutta time step using scheme given:
@@ -116,23 +123,17 @@ function RK_time_step_explicit(
 
     k̲ = [f̲(t_i, u_i, other_coords)]
     for r in axes(b)[1][2:end]
-        k̲_sum = begin
-            val = zeros(typeof(u_i[1]), size(u_i))
-            for l in axes(b)[1][1]:(r - 1)
-                val .+= a[r, l].*k̲[l]
-            end
-            val
+        k̲_sum = zeros(typeof(u_i[1]), size(u_i))
+        for l in axes(b)[1][1]:(r - 1)
+            k̲_sum .+= a[r, l].*k̲[l]
         end
-        push!(k̲,
-              f̲(t_i + c[r]*Δt, u_i .+ Δt.*k̲_sum, other_coords))
+        push!(k̲, f̲(t_i + c[r]*Δt, u_i .+ Δt.*k̲_sum, other_coords))
     end
-    return Δt.*begin
-        val = zeros(typeof(u_i[1]), size(u_i))
-        for r in axes(b)[1]
-            val .+= b[r].*k̲[r]
-        end
-        val
+    k_sum_full = zeros(typeof(u_i[1]), size(u_i))
+    for r in axes(b)[1]
+        k_sum_full .+= b[r].*k̲[r]
     end
+    return Δt.*k_sum_full
 end
 
 
