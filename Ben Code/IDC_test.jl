@@ -12,7 +12,7 @@ function IDC_test_func(ODE_system::ODESystem, p, K, N_array)
 
     S = integration_matrix_equispaced(p - 1)
     for N in N_array
-        (t_in, η_approx) = RIDC_FE_sequential(S, f, t_s, t_e, y_s, N, K, p)
+        (t_in, η_approx) = IDC_RK2(S, f, t_s, t_e, y_s, N, p)
         η_out = η_approx[:, end]
 
         η_exact = y.(t_in)

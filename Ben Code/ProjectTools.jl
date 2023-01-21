@@ -21,7 +21,8 @@ export
     @unpack_RKMethod,
     RK_time_step_explicit,
     RK4_standard,
-    RK_forward_euler,
+    RK2_midpoint,
+    RK1_forward_euler,
 
     integration_matrix,
     integration_matrix_equispaced,
@@ -73,11 +74,93 @@ match length of b.
     a::Array{<:Real, 2}
     b::Array{<:Real, 1}
     c::Array{<:Real, 1}
-    function RKMethod(a, b, c)
-        (length(axes(a)[1]) == length(axes(c)[1])) || error("a and c axes do not match")
-        (length(axes(a)[2]) == length(axes(b)[1])) || error("a and b axes do not match")
-        return new(a, b, c)
+    order_of_accuracy::Int64
+    function RKMethod(a, b, c, order_of_accuracy)
+        check_RK_method_size(a, b, c)
+        (length(axes(c)[1]) >= order_of_accuracy)  || error("System too small to support this order of accuracy")
+        return new(a, b, c, order_of_accuracy)
     end
+    function RKMethod(a, b, c)
+        check_RK_method_size(a, b, c)
+        return new(a, b, c, length(axes(c)[1]))
+    end
+end
+
+function check_RK_method_size(a, b, c)
+    (length(axes(a)[1]) == length(axes(c)[1])) || error("a and c axes do not match")
+    (length(axes(a)[2]) == length(axes(b)[1])) || error("a and b axes do not match")
+end
+
+"""
+Perform a single explicit Runge-Kutta time step using scheme given:
+
+u_{i+1} = uᵢ + Δt⋅∑bᵣ⋅kᵣ, where
+kᵣ = f(tᵢ + cᵣ⋅Δt, uᵢ + Δt⋅∑aᵣₗ⋅kₗ, other_coords)
+
+( k = [k₁, k₂, ..., kₛ] )
+
+Note how extra coordinates in the system, e.g. x and y, are to be bundled together in
+vector as argument other_coords.
+"""
+function RK_time_step_explicit(
+    f::Function,
+    Δt::Float64,
+    t_i::Float64,
+    u_i,
+    other_coords;
+    RK_method::RKMethod = RK4_standard
+)
+    @unpack_RKMethod RK_method
+
+    k = [f(t_i, u_i, other_coords)]
+    for r in axes(b)[1][2:end]
+        k_sum = zeros(typeof(u_i[1]), size(u_i))
+        for l in axes(b)[1][1]:(r - 1)
+            k_sum .+= a[r, l].*k[l]
+        end
+        push!(k, f(t_i + c[r]*Δt, u_i .+ Δt.*k_sum, other_coords))
+    end
+    k_sum_full = zeros(typeof(u_i[1]), size(u_i))
+    for r in axes(b)[1]
+        k_sum_full .+= b[r].*k[r]
+    end
+    return Δt.*k_sum_full
+end
+"""
+Perform a single explicit correction time-step step using the given Runge-Kutta scheme:
+
+η^{l+1}_{i+1} = η^{l+1}ᵢ + Δt⋅∑bᵣ⋅kᵣ + Δt⋅Σ, where
+kᵣ = f(tᵢ + cᵣ⋅Δt, η^{l+1}ᵢ + Δt⋅∑aᵣₗ⋅kₗ + cᵣ⋅Δt⋅Σ) - f(tᵢ + cᵣ⋅Δt, ηˡ(tᵢ + cᵣ⋅Δt))
+
+( k = [k₁, k₂, ..., kₛ] )
+
+η_old is the interpolant function η^{l+1}(t) evaluated at each time tᵢ + cᵣ⋅Δt.
+"""
+function RK_correction_time_step_explicit(
+    f::Function,
+    Δt::Float64,
+    t_i::Float64,
+    η_i,
+    Σ,
+    η_old;
+    RK_method::RKMethod = RK4_standard
+)
+    @unpack_RKMethod RK_method
+
+    k = [f(t_i, η_i) - f(t_i, η_old_i)]
+    for r in axes(b)[1][2:end]
+        k_sum = zeros(typeof(η_i[1]), size(η_i))
+        for l in axes(b)[1][1]:(r - 1)
+            k_sum .+= a[r, l].*k[l]
+        end
+        k_next = f(t_i + c[r]*Δt, η_i .+ Δt.*k_sum .+ c[r].*Σ) - f(t_i + c[r]*Δt, η_old[r])
+        push!(k, k_next)
+    end
+    k_sum_full = zeros(typeof(η_i[1]), size(η_i))
+    for r in axes(b)[1]
+        k_sum_full .+= b[r].*k[r]
+    end
+    return Δt.*k_sum_full .+ Δt.*Σ
 end
 
 """ Canonical RK4 method. """
@@ -93,48 +176,34 @@ RK4_standard = RKMethod(
         0//1, 1//2, 1//2, 1//1
     ]
 )
+""" Midpoint Runge-Kutta method. """
+RK2_midpoint = RKMethod(
+    a = [
+        0//1  0//1;
+        1//2  0//1
+    ], b = [
+        0//1, 1//1
+    ], c = [
+        0//1, 1//2
+    ]
+)
+""" Second order trapezoidal Runge-Kutta method (A.K.A. Heun's method) """
+RK2_trapezoid = RKMethod(
+    a = [
+        0//1  0//1;
+        1//1  0//1
+    ], b = [
+        1//2, 1//2
+    ], c = [
+        0//1, 1//1
+    ]
+)
 """ Forward Euler method. """
-RK_forward_euler = RKMethod(
+RK1_forward_euler = RKMethod(
     a = fill(0, 1, 1),
     b = [0],
     c = [1]
 )
-
-"""
-Perform a single explicit Runge-Kutta time step using scheme given:
-
-u_{i+1} = uᵢ + Δt⋅∑bᵣ⋅kᵣ, where
-kᵣ = f(tᵢ + cᵣ⋅Δt, uᵢ + Δt⋅∑aᵣₗ⋅kₗ, other_coords)
-
-( k = [k₁, k₂, ..., kₛ] )
-
-Note how extra coordinates in the system, e.g. x and y, are to be bundled together in
-vector as argument other_coords.
-"""
-function RK_time_step_explicit(
-    f̲::Function,
-    Δt::Float64,
-    t_i::Float64,
-    u_i,
-    other_coords;
-    RK_method::RKMethod = RK4_standard
-)
-    @unpack_RKMethod RK_method
-
-    k = [f̲(t_i, u_i, other_coords)]
-    for r in axes(b)[1][2:end]
-        k_sum = zeros(typeof(u_i[1]), size(u_i))
-        for l in axes(b)[1][1]:(r - 1)
-            k_sum .+= a[r, l].*k[l]
-        end
-        push!(k, f̲(t_i + c[r]*Δt, u_i .+ Δt.*k_sum, other_coords))
-    end
-    k_sum_full = zeros(typeof(u_i[1]), size(u_i))
-    for r in axes(b)[1]
-        k_sum_full .+= b[r].*k[r]
-    end
-    return Δt.*k_sum_full
-end
 
 
 function integration_matrix(t::Array{T}) where T
@@ -272,7 +341,7 @@ function IDC_RK2(S, f, a, b, α, N, p)
         # Prediction loop
         for m in 1:M
             k = j*M + m
-            η[k + 1] = η[k] + 0.5Δt*(f(t[k], η[k]) + f(t[k + 1], η[k] + Δt*f(t[k], η[k])))
+            η[k + 1] = RK_time_step_explicit(f, Δt, t[k], η[k]; RK_method = RK2_midpoint)
         end
         # Correction loop
         I = (j*M + 1):((j + 1)*M + 1)   # Quadrature nodes
@@ -281,9 +350,10 @@ function IDC_RK2(S, f, a, b, α, N, p)
             for m in 1:M
                 k = j*M + m
                 ∫fₖ = dot(S[m, :], f.(t[I], η_old[I]))
-                K₁ = f(t[k], η[k]) - f(t[k], η_old[k])
-                K₂ = f(t[k + 1], η[k] + Δt*(K₁ + ∫fₖ)) - f(t[k + 1], η_old[k + 1])
-                η[k + 1] = η[k] + Δt*(0.5K₁ + 0.5K₂ + ∫fₖ)
+                η[k + 1] = RK_correction_time_step_explicit(
+                    f, Δt, t[k], η[k], ∫fₖ, [η_old[k], η_old[k + 1]];
+                    RK_method = RK2_trapezoid
+                )
             end
         end
     end
@@ -293,6 +363,40 @@ end
 function IDC_RK2(f, a, b, α, N, p)
     return IDC_RK2(integration_matrix_equispaced(p - 1), f, a, b, α, N, p)
 end
+
+function IDC_RK_general(S, f, a, b, α, N, p; RK_method::RKMethod = RK2_midpoint)
+    # Initialise variables
+    t = range(a, b, N + 1) |> collect
+    Δt = (b - a)/N
+    M = p - 1
+    J = fld(N, M)
+    η = zeros(N + 1)
+    η[1] = α
+
+    for j in 0:(J - 1)
+        # Prediction loop
+        for m in 1:M
+            k = j*M + m
+            η[k + 1] = RK_time_step_explicit(f, Δt, t[k], η[k]; RK_method = RK_method)
+        end
+        # Correction loop
+        I = (j*M + 1):((j + 1)*M + 1)   # Quadrature nodes
+        for _ in 2:fld(p, 2)
+            η_old = copy(η)
+            for m in 1:M
+                k = j*M + m
+                ∫fₖ = dot(S[m, :], f.(t[I], η_old[I]))
+                η[k + 1] = RK_correction_time_step_explicit(
+                    f, Δt, t[k], η[k], ∫fₖ, [η_old[k], η_old[k + 1]];
+                    RK_method = RK_method
+                )
+            end
+        end
+    end
+
+    return (t, η)
+end
+
 
 """
 Integral deferred correction with a single subinterval (uses static 
