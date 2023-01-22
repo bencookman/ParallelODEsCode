@@ -5,7 +5,8 @@ using
     Statistics,
     PyCall,
     FastGaussQuadrature,
-    Parameters
+    Parameters,
+    BarycentricInterpolation
 
 export
     err_abs,
@@ -22,6 +23,7 @@ export
     RK_time_step_explicit,
     RK4_standard,
     RK2_midpoint,
+    RK2_trapezoid,
     RK1_forward_euler,
 
     integration_matrix,
@@ -31,6 +33,8 @@ export
     IDC_FE,
     IDC_FE_correction_levels,
     IDC_RK2,
+    IDC_RK_general,
+    get_IDC_RK_group_poly,
     IDC_FE_single,
     IDC_FE_single_correction_levels,
     SDC_FE,
@@ -80,10 +84,6 @@ match length of b.
         (length(axes(c)[1]) >= order_of_accuracy)  || error("System too small to support this order of accuracy")
         return new(a, b, c, order_of_accuracy)
     end
-    function RKMethod(a, b, c)
-        check_RK_method_size(a, b, c)
-        return new(a, b, c, length(axes(c)[1]))
-    end
 end
 
 function check_RK_method_size(a, b, c)
@@ -107,18 +107,18 @@ function RK_time_step_explicit(
     Δt::Float64,
     t_i::Float64,
     u_i,
-    other_coords;
+    other_coords...;
     RK_method::RKMethod = RK4_standard
 )
     @unpack_RKMethod RK_method
 
-    k = [f(t_i, u_i, other_coords)]
+    k = [f(t_i, u_i, other_coords...)]
     for r in axes(b)[1][2:end]
         k_sum = zeros(typeof(u_i[1]), size(u_i))
         for l in axes(b)[1][1]:(r - 1)
             k_sum .+= a[r, l].*k[l]
         end
-        push!(k, f(t_i + c[r]*Δt, u_i .+ Δt.*k_sum, other_coords))
+        push!(k, f(t_i + c[r]*Δt, u_i .+ Δt.*k_sum, other_coords...))
     end
     k_sum_full = zeros(typeof(u_i[1]), size(u_i))
     for r in axes(b)[1]
@@ -147,7 +147,7 @@ function RK_correction_time_step_explicit(
 )
     @unpack_RKMethod RK_method
 
-    k = [f(t_i, η_i) - f(t_i, η_old_i)]
+    k = [f(t_i, η_i) - f(t_i, η_old[1])]
     for r in axes(b)[1][2:end]
         k_sum = zeros(typeof(η_i[1]), size(η_i))
         for l in axes(b)[1][1]:(r - 1)
@@ -174,7 +174,8 @@ RK4_standard = RKMethod(
         1//6, 1//3, 1//3, 1//6
     ], c = [
         0//1, 1//2, 1//2, 1//1
-    ]
+    ],
+    order_of_accuracy = 4
 )
 """ Midpoint Runge-Kutta method. """
 RK2_midpoint = RKMethod(
@@ -185,7 +186,8 @@ RK2_midpoint = RKMethod(
         0//1, 1//1
     ], c = [
         0//1, 1//2
-    ]
+    ],
+    order_of_accuracy = 2
 )
 """ Second order trapezoidal Runge-Kutta method (A.K.A. Heun's method) """
 RK2_trapezoid = RKMethod(
@@ -196,13 +198,15 @@ RK2_trapezoid = RKMethod(
         1//2, 1//2
     ], c = [
         0//1, 1//1
-    ]
+    ],
+    order_of_accuracy = 2
 )
 """ Forward Euler method. """
 RK1_forward_euler = RKMethod(
     a = fill(0, 1, 1),
     b = [0],
-    c = [1]
+    c = [1],
+    order_of_accuracy = 1
 )
 
 
@@ -364,13 +368,13 @@ function IDC_RK2(f, a, b, α, N, p)
     return IDC_RK2(integration_matrix_equispaced(p - 1), f, a, b, α, N, p)
 end
 
-function IDC_RK_general(S, f, a, b, α, N, p; RK_method::RKMethod = RK2_midpoint)
+function IDC_RK_general(S, f, a, b, α::T, N, p; RK_method::RKMethod = RK2_midpoint) where T
     # Initialise variables
     t = range(a, b, N + 1) |> collect
     Δt = (b - a)/N
     M = p - 1
     J = fld(N, M)
-    η = zeros(N + 1)
+    η = zeros(T, N + 1)
     η[1] = α
 
     for j in 0:(J - 1)
@@ -383,11 +387,13 @@ function IDC_RK_general(S, f, a, b, α, N, p; RK_method::RKMethod = RK2_midpoint
         I = (j*M + 1):((j + 1)*M + 1)   # Quadrature nodes
         for _ in 2:fld(p, 2)
             η_old = copy(η)
+            η_old_group_poly = get_IDC_RK_group_poly(η_old, t[j*M + 1], t[(j + 1)*M], (j*M + 1):((j + 1)*M))
             for m in 1:M
                 k = j*M + m
                 ∫fₖ = dot(S[m, :], f.(t[I], η_old[I]))
+                η_old_interpolants = [η_old_group_poly(t[k] + Δt*cᵣ) for cᵣ in RK_method.c]
                 η[k + 1] = RK_correction_time_step_explicit(
-                    f, Δt, t[k], η[k], ∫fₖ, [η_old[k], η_old[k + 1]];
+                    f, Δt, t[k], η[k], ∫fₖ, η_old_interpolants;
                     RK_method = RK_method
                 )
             end
@@ -397,6 +403,15 @@ function IDC_RK_general(S, f, a, b, α, N, p; RK_method::RKMethod = RK2_midpoint
     return (t, η)
 end
 
+"""
+Generates the polynomial which interpolates η_old at all points in a given group
+and returns as a function of time.
+"""
+function get_IDC_RK_group_poly(η_old, t_group_s, t_group_e, group_indices)
+    equispaced_poly = Equispaced{length(group_indices) - 1}()
+    interpolating_poly = interpolate(equispaced_poly, η_old[group_indices])
+    return (t_in -> interpolating_poly(2(t_in - t_group_s)/(t_group_e - t_group_s) - 1))
+end
 
 """
 Integral deferred correction with a single subinterval (uses static 

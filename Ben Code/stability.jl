@@ -8,7 +8,7 @@ using .ProjectTools
 Find borders to stability regions (where Am(λΔt)≈1) at various corrections
 levels.
 """
-function corrections_stability_border(Δt, p, K; λ₀=Complex(-1.0, 0.0))
+function corrections_stability_border(Δt, p, K; λ₀ = Complex(-1.0, 0.0))
     θ_res = 100
     Δr = 0.01
     ∂S = zeros(Complex, θ_res, p)
@@ -42,9 +42,9 @@ function corrections_stability_border(Δt, p, K; λ₀=Complex(-1.0, 0.0))
     return ∂S
 end
 
-function plot_corrections_stability(Δt, p, K; λ₀=Complex(-1.0, 0.0))
+function plot_corrections_stability(Δt, p, K; λ₀ = Complex(-1.0, 0.0))
     # Get border data
-    ∂S = corrections_stability_border(Δt, p, K)
+    ∂S = corrections_stability_border(Δt, p, K; λ₀ = λ₀)
     ∂S = [val for val in ∂S]
     # Plot borders
     border_plot = plot(
@@ -134,3 +134,45 @@ function plot_stabilities(Δt, p, K; λ₀=Complex(-1.0, 0.0))
     display(border_plot)
 end
 
+
+"""
+Uses a Cartesian discretisation of the complex plane and returns two matrices:
+λ_mesh         = those values λ on the complex plane which where analysed,
+stability_mesh = whether or not the corresponding value on λ was stable or not.
+"""
+function find_cartesian_stability_mesh(
+    Δt, p, K;
+    x_values = x_values, y_values = y_values
+)
+    # Create 2D meshes
+    λ_mesh = [x + im*y for x in x_values, y in y_values]
+    stability_mesh = zeros(size(λ_mesh))
+
+    # Initialise numerical parameters
+    S = integration_matrix_equispaced(p - 1)
+
+    # Calculate stability mesh
+    for i in 1:length(x_values), j in 1:length(y_values)
+        λ = λ_mesh[i, j]
+        f(t, y) = λ*y
+        (_, η) = IDC_RK_general(S, f, 0.0, Δt*K, 1.0 + 0.0im, K, p; RK_method = RK1_forward_euler)
+        is_λ_stable = (abs(η[2]) < 1.0) ? 1.0 : 0.0
+        stability_mesh[i, j] = is_λ_stable
+    end
+
+    return (λ_mesh, stability_mesh)
+end
+
+function plot_cartesian_stability_mesh(
+    Δt, p, K;
+    x_range = (-2.5, 0.5), y_range = (-2.0, 2.0),
+    x_res = 100, y_res = 100
+)
+    x_values = range(x_range[1], x_range[2], x_res)
+    y_values = range(y_range[1], y_range[2], y_res)
+    (λ_mesh, stability_mesh) = find_cartesian_stability_mesh(
+        Δt, p, K;
+        x_values = x_values, y_values = y_values
+    )
+    heatmap(x_values, y_values, transpose(stability_mesh))
+end
