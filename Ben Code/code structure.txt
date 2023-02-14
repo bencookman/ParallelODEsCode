@@ -1,0 +1,25 @@
+Scheme{
+name
+function {
+Takes in ODESystem and NumericalParameters to solve?
+Can return all correction levels if you'd like
+}
+correction levels {bool}
+node type {Uniform, Gauss-Legendre, Gauss-Lobatto}
+numerical parameters {N, K, J, M, p, S}
+underlying scheme {FE, RK2, RK4}
+}
+
+Stability Analysis{
+schemes {(Scheme, include correction levels? {bool})}
+scanning type {
+Cartesian {:x, :y} {x_bounds, y_bounds, x_res, y_res},
+polar {:r, :theta} {r_max, r_res, theta_res}
+}
+
+}
+
+Convergence Analysis{
+schemes {}
+
+}

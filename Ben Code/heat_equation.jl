@@ -3,6 +3,9 @@ using FFTW, Dates, ProgressMeter, LaTeXStrings, Plots
 u_INITIAL_1(x) = exp(-100*(x - π)^2)
 u_INITIAL_2(x) = max(0, 1 - abs(x/π - 1))
 u_INITIAL_3(x) = exp(-100*(x - 1)^2)
+u_4(t, x; c = 1.0) = 1 + sin(x)*exp(-c*t)
+u_4_INITAL(x) = u_4(0.0, x)
+
 
 """
 Solves the heat equation ∂ₜu = c∂ₓ²u by time stepping with Fourier spectral
@@ -49,11 +52,11 @@ function animate_heat_equation_solution(; max_frames=240)
 
     N_t = length(t)
     max_frames = (max_frames > N_t) ? N_t : max_frames # Ensures at least 1 frame
-    animation = @animate for (i, uᵢ) in enumerate(u_return)
-        t_str = string(t[i])[1:min(length(string(t[i])), 4)]
+    animation = @animate for (i, (t_value, u)) in enumerate(zip(t, u_return))
+        t_string = string(t_value)[1:min(length(string(t_value)), 4)]
         plot(
-            x, uᵢ,
-            title=latexstring("t = $t_str"),
+            x, u,
+            title=latexstring("t = $t_string"),
             xlims=(0.0, 2π), ylims=(0.0, 1.0),
             size=(1200, 800)
         )
