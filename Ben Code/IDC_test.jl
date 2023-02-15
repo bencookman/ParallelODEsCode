@@ -75,7 +75,7 @@ function test_IDC_SDC(
 end
 
 function test_RIDC()
-    N_array = 10:3:40
+    N_array = 10:3:52
     p = 8
     S = integration_matrix_uniform(p - 1)
 
@@ -114,35 +114,6 @@ function test_RIDC()
     # savefig(plot_err, fname)
     display(plot_err)
 end
-
-
-""" Taken from page 53 of Numerical Methods for ODEs by J C Butcher """
-const Butcher_p53_system = ODETestSystem(
-    (t, y) -> (y - 2t*y^2)/(1 + t),
-    1.0,
-    0.4,
-    t -> (1 + t)/(t^2 + 1/0.4)
-)
-""" https://doi.org/10.1137/09075740X """
-const sqrt_system = ODETestSystem(
-    (t, y) -> 4t*sqrt(y),
-    5.0,
-    1.0 + 0.0im,
-    t -> (1 + t^2)^2
-)
-const cube_system = ODETestSystem(
-    (t, y) -> t^3,
-    5.0,
-    2.0,
-    t -> 0.25*t^4 + 2.0,
-)
-
-const stiff_system_1 = ODETestSystem(
-    (t, y) -> 4y,
-    3.0,
-    1.0,
-    t -> exp(4t)
-)
 
 function IDC_test_implicit_correction_levels()
     p = 4
@@ -303,4 +274,161 @@ function integration_matrix_test()
     dtstring = Dates.format(now(), "DY-m-d-TH-M-S")
     fname = "Ben Code/output/tests/int-matrix-new-err-cos-2-10-$dtstring.png"
     savefig(test_plot, fname)
+end
+
+
+function predict_group(
+    η_start, t_group,
+    f, value_type,
+    M, Δt
+)
+    η_group = zeros(value_type, M + 1)
+    η_group[1] = η_start
+    for m in 1:M
+        η_group[m + 1] = η_group[m] + Δt*f(t_group[m], η_group[m])
+    end
+    return η_group
+end
+
+function correct_group(
+    η_start, t_group, η_old_group,
+    f, value_type,
+    M, S, Δt
+)
+    η_group = zeros(value_type, M + 1)
+    η_group[1] = η_start
+    for m in 1:M
+        ∫fₘ = dot(S[m, :], f.(t_group, η_old_group))
+        η_group[m + 1] = η_group[m] + Δt*(f(t_group[m], η_group[m]) - f(t_group[m], η_old_group[m])) + Δt*∫fₘ
+    end
+    return η_group
+end
+
+"""
+A slightly modified IDC method where we do the prediction and correction levels
+over the whole time domain sequentially.
+This allows for parallelisation 'over the groups'.
+"""
+function IDC_across_groups_sequential(
+    ODE_system::ODESystem,
+    J, number_corrections, S
+)
+    # Initialise variables
+    @unpack_ODESystem ODE_system
+    p = number_corrections + 1
+    M = p - 1
+    N = M*J
+    t = range(t_s, t_e, N + 1)  # Uniform time nodes
+    Δt = (t_e - t_s)/N
+    η = zeros(typeof(y_s), N + 1)
+    η[1] = y_s
+
+    # Prediction
+    for j in 0:(J - 1)
+        I = (j*M + 1):((j + 1)*M + 1)
+        η[I] .= predict_group(η[I[1]], t[I],f, typeof(y_s), M, Δt)
+    end
+    # Correction
+    for _ in 1:number_corrections
+        η_old = copy(η)
+        for j in 0:(J - 1)
+            I = (j*M + 1):((j + 1)*M + 1)
+            η[I] .= correct_group(η[I[1]], t[I], η_old[I], f, typeof(y_s), M, S, Δt)
+        end
+    end
+
+    return (t, η)
+end
+
+function IDC_across_groups_parallel(
+    ODE_system::ODESystem,
+    J, number_corrections, S
+)
+    # Initialise variables
+    @unpack_ODESystem ODE_system
+    p = number_corrections + 1
+    M = p - 1
+    N = M*J
+    t = range(t_s, t_e, N + 1)  # Uniform time nodes
+    Δt = (t_e - t_s)/N
+    η = zeros(typeof(y_s), N + 1, p)
+    η[1, :] .= y_s
+
+    (J <= (number_corrections + 1)) && throw(error("too few groups to run"))
+
+    # Startup
+    for j in 0:number_corrections
+        I = (j*M + 1):((j + 1)*M + 1)
+        η[I, 1] .= predict_group(η[I[1], 1], t[I], f, typeof(y_s), M, Δt)
+    end
+    for l in 1:number_corrections
+        for j in 0:(number_corrections - l)
+            I = (j*M + 1):((j + 1)*M + 1)
+            η[I, l + 1] .= correct_group(η[I[1], l + 1], t[I], η[I, l], f, typeof(y_s), M, S, Δt)
+        end
+    end
+
+    # Corrections can now be run at the same time (here, before) as prediction
+    for j in (number_corrections + 1):(J - 1)
+        for l in number_corrections:-1:1
+            j_level = j - l
+            I = (j_level*M + 1):((j_level + 1)*M + 1)   # Group changes with correction level
+            η[I, l + 1] .= correct_group(η[I[1], l + 1], t[I], η[I, l], f, typeof(y_s), M, S, Δt)
+        end
+        I = (j*M + 1):((j + 1)*M + 1)
+        η[I, 1] .= predict_group(η[I[1], 1], t[I], f, typeof(y_s), M, Δt)
+    end
+
+    # To terminate we run in sequence again
+    for l in 1:number_corrections
+        for j in (J - l):(J - 1)
+            I = (j*M + 1):((j + 1)*M + 1)
+            η[I, l + 1] .= correct_group(η[I[1], l + 1], t[I], η[I, l], f, typeof(y_s), M, S, Δt)
+        end
+    end
+
+    return (t, η[:, end])
+end
+
+function test_IDC_across_groups()
+    J_array = 4:20
+    number_corrections = 2
+    p = number_corrections + 1
+    orders_to_plot = 1:p
+
+    @unpack_ODETestSystem sqrt_system
+    @unpack_ODESystem ODE_system
+
+    S = integration_matrix_uniform(p - 1)
+    N_array = J_array*(p - 1)
+    Δt_array = (t_e - t_s)./N_array
+    err_array = []
+    y_exact_end = y(t_e)
+    for J in J_array
+        (_, y_out) = IDC_across_groups_parallel(ODE_system, J, number_corrections, S)
+        y_out_end = real(y_out[end])
+        err = err_rel(y_exact_end, y_out_end)
+        push!(err_array, err)
+    end
+
+    plot_err = plot(
+        xscale=:log10, yscale=:log10, xlabel=L"Δt", ylabel="||E||",
+        key=:bottomright, size=(1600, 1200), thickness_scaling=2.0
+    )
+    plot!(
+        plot_err,
+        Δt_array, err_array,
+        markershape=:circle, label="Solution approximated with \'IDC across the groups\'", color = :blue,
+    )
+    for order in orders_to_plot
+        err_order_array = Δt_array.^order # Taking error constant = 1 always
+        plot!(
+            plot_err, Δt_array, err_order_array,
+            linestyle=:dash, label=L"1\cdot (\Delta t)^%$order"
+        )
+    end
+    # dtstring = Dates.format(now(), "DY-m-d-TH-M-S")
+    # fname = "Ben Code/output/convergence/$dtstring-convergence-IDC_FE,SDC_FE.png"
+    # savefig(plot_err, fname)
+    display(plot_err)
 end

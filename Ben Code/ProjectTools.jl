@@ -27,6 +27,10 @@ export
     @unpack_ODESystem,
     ODETestSystem,
     @unpack_ODETestSystem,
+    Butcher_p53_system,
+    sqrt_system,
+    cube_system,
+    stiff_system_1,
 
     RKMethod,
     @unpack_RKMethod,
@@ -101,6 +105,34 @@ end
 
 ODETestSystem(f, t_s, t_e, y_s, y) = ODETestSystem(ODESystem(f, t_s, t_e, y_s), y)
 ODETestSystem(f, t_e, y_s, y) = ODETestSystem(ODESystem(f, 0.0, t_e, y_s), y)
+
+""" Taken from page 53 of Numerical Methods for ODEs by J C Butcher """
+const Butcher_p53_system = ODETestSystem(
+    (t, y) -> (y - 2t*y^2)/(1 + t),
+    1.0,
+    0.4,
+    t -> (1 + t)/(t^2 + 1/0.4)
+)
+""" https://doi.org/10.1137/09075740X """
+const sqrt_system = ODETestSystem(
+    (t, y) -> 4t*sqrt(y),
+    5.0,
+    1.0 + 0.0im,
+    t -> (1 + t^2)^2
+)
+const cube_system = ODETestSystem(
+    (t, y) -> t^3,
+    5.0,
+    2.0,
+    t -> 0.25*t^4 + 2.0,
+)
+
+const stiff_system_1 = ODETestSystem(
+    (t, y) -> 4y,
+    3.0,
+    1.0,
+    t -> exp(4t)
+)
 
 
 """
