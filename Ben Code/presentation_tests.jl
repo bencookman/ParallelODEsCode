@@ -105,7 +105,7 @@ end
 
 function test_IDC()
     J_array = [1, 2, 4, 8]
-    orders_to_plot = 1:2
+    orders_to_plot = 1:4
 
     M = 5
     S = integration_matrix_uniform(M)
@@ -117,7 +117,7 @@ function test_IDC()
     err_array = []
     y_exact_end = y(t_e)
     for J in J_array
-        (_, y_out) = IDC_FE(ODE_system, J, M, 1, S)
+        (_, y_out) = IDC_FE(ODE_system, J, M, 3, S)
         y_out_end = real(y_out[end])
         err = err_rel(y_exact_end, y_out_end)
         push!(err_array, err)
@@ -153,6 +153,66 @@ function test_IDC()
         )
     end
     # dtstring = Dates.format(now(), "DY-m-d-TH-M-S")
+    # fname = "Ben Code/output/convergence/$dtstring-convergence-IDC_FE,SDC_FE.png"
+    # savefig(plot_err, fname)
+    display(plot_err)
+end
+
+function test_IDC_for_presentation()
+    J_array = [1, 2, 4, 8]
+    p = 3
+    orders_to_plot = 1:4
+    orders_to_label = Set([p])
+
+    M = 5
+    S = integration_matrix_uniform(M)
+
+    @unpack_ODETestSystem sqrt_system
+    @unpack_ODESystem ODE_system
+    N_array = M.*J_array
+    Δt_array = (t_e - t_s)./N_array
+    err_array_all_levels = Array{Float64, 2}(undef, length(N_array), p)
+    y_exact_end = y(t_e)
+    for (i, J) in enumerate(J_array)
+        (_, y_out) = IDC_FE_correction_levels(ODE_system, J, M, p - 1, S)
+        y_out_end = real(y_out[end, :])
+        err = err_rel.(y_exact_end, y_out_end)
+        err_array_all_levels[i, :] .= err
+    end
+
+    RCPARAMS["xtick.major.pad"] = 10
+    # RCPARAMS["mathtext.fontset"] = "cm"
+    # plot_err = plot(
+    #     xscale = :log10, yscale = :log10, xlabel = raw"huh $\Delta t$", ylabel = raw"wut $||E||$",
+    #     tickfontsize = 10, legendfontsize = 5,
+    #     key = :bottomright, size = (1000, 750), thickness_scaling = 3.0,
+    #     # ylims = (10^(-3.2), 10^(-1.8)), yticks = [1e-3, 1e-2]
+    # )
+    plot_err = plot(
+        xscale = :log10, yscale = :log10, xlabel = raw"$Δt$", ylabel = raw"$||E||$",
+        guidefontsize = 10, tickfontsize = 8, legendfontsize = 8,
+        key = :bottomright, size = (800, 600), thickness_scaling = 3.5,
+        xticks = [1e0, 10^(-0.5), 1e-1], yticks = [1e-4, 1e-2],
+        xlims = (1e-1, 10^(0.05)), ylims = (10^(-5.25), 10^(-0.25)),
+        legendposition = :bottomright
+    )
+    for order in orders_to_plot
+        err_order_array = 0.2Δt_array.^order # Taking error constant = 1 always
+        label_string = (order in orders_to_label) ? L"||E|| = 0.2\cdot (\Delta t)^%$order" : ""
+        plot!(
+            plot_err, Δt_array, err_order_array,
+            linestyle = :dash, label = label_string
+        )
+    end
+    for l in 2:p
+        err_array = err_array_all_levels[:, l]
+        plot!(
+            plot_err,
+            Δt_array, err_array,
+            markershape = :circle, label = "", color = :blue,
+        )
+    end
+# dtstring = Dates.format(now(), "DY-m-d-TH-M-S")
     # fname = "Ben Code/output/convergence/$dtstring-convergence-IDC_FE,SDC_FE.png"
     # savefig(plot_err, fname)
     display(plot_err)

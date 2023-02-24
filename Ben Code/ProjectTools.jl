@@ -405,7 +405,7 @@ function IDC_FE(
 
     return (t, η)
 end
-function IDC_FE(
+function IDC_FE_correction_levels(
     ODE_system::ODESystem,
     J, M, number_corrections, S
 )
@@ -415,23 +415,22 @@ function IDC_FE(
     p = number_corrections + 1
     t = range(t_s, t_e, N + 1) |> collect
     Δt = (t_e - t_s)/N
-    η = zeros(typeof(y_s), N + 1)
-    η[1] = y_s
+    η = zeros(typeof(y_s), N + 1, p)
+    η[1, :] .= y_s
 
     for j in 0:(J - 1)
         # Prediction loop
         for m in 1:M
             k = j*M + m
-            η[k + 1] = η[k] + Δt*f(t[k], η[k])
+            η[k + 1, 1] = η[k, 1] + Δt*f(t[k], η[k, 1])
         end
         # Correction loop
         I = (j*M + 1):((j + 1)*M + 1)
-        for _ in 1:number_corrections
-            η_old = copy(η)
+        for l in 2:p
             for m in 1:M
                 k = j*M + m
-                ∫fₖ = dot(S[m, :], f.(t[I], η_old[I]))
-                η[k + 1] = η[k] + Δt*(f(t[k], η[k]) - f(t[k], η_old[k])) + Δt*∫fₖ
+                ∫fₖ = dot(S[m, :], f.(t[I], η[I, l - 1]))
+                η[k + 1, l] = η[k, l] + Δt*(f(t[k], η[k, l]) - f(t[k], η[k, l - 1])) + Δt*∫fₖ
             end
         end
     end
