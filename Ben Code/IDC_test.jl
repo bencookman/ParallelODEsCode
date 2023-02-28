@@ -4,7 +4,9 @@ using
     BenchmarkTools,
     Statistics,
     LinearAlgebra,
-    LaTeXStrings
+    LaTeXStrings,
+    FastGaussQuadrature,
+    PyCall
 
 include("ProjectTools.jl")
 
@@ -388,6 +390,63 @@ function IDC_across_groups_parallel(
     end
 
     return (t, η[:, end])
+end
+
+function GRSDC_gauss_lobatto_serial(
+    ODE_system::ODESystem,
+    J, number_corrections, S_array, number_final_level_nodes
+)
+    scipy_bary_interp = pyimport("scipy.interpolate").BarycentricInterpolator
+
+    @unpack_ODESystem ODE_system
+    p = number_corrections + 1
+
+    # Each level does a different number of approximations 
+    η = [zeros(typeof(y_s), level*J + 1) for level in 1:number_corrections]
+    push!(η, zeros(typeof(y_s), number_final_level_nodes*J + 1))
+    for level in 1:(number_corrections + 1)
+        η[level, 1] .= y_s
+    end
+
+    t_groups = range(t_s, t_e, J + 1)
+    Δt_group = t_groups[2] - t_groups[1]
+    # All necessary Gauss-Lobatto nodes over [-1, 1] and scale these to nodes over [0, Δt_group]
+    t_gl = [gausslobatto(1 + level)[1] for level in 1:number_corrections]
+    push!(t_gl, gausslobatto(1 + number_final_level_nodes)[1])
+    t_gl .= (t_gl .+ 1).*(Δt_group/2)
+    Δt_gl = t_gl[2:end] - t_gl[1:end]
+
+    (number_corrections == length(S_array)) || throw(error("there must be as many integration matrices as corrections"))
+    (number_final_level_nodes >= 1) || throw(error("must have at least one node in the final level"))
+
+    S_index_level(level) = (level > number_corrections) ? number_final_level_nodes : level
+
+    # Prediction
+    for j in 0:(J - 1)
+        k = j + 1
+        η[1, k + 1] = η[1, k] + Δt*f(t_groups[j + 1], η[1, k])
+    end
+    # Corrections
+    for level in 2:(number_corrections + 1)
+        t_gl_current = t_gl[level]
+        t_gl_prev = t_gl[level - 1]
+        for j in 0:(J - 1)
+            t_current = t_gl_current .+ t_groups[j + 1]
+            t_prev = t_gl_prev .+ t_groups[j + 1]
+            I = (j*(length(t_prev) - 1) + 1):((j + 1)*(length(t_prev) - 1) + 1)
+            # Calculate interpolating polynomial over previous level's group of values
+            η_prev_interp = scipy_bary_interp(t_prev, η[level - 1][I])
+            for m in 1:(length(t_current) - 1)
+                k = j*(length(t_current) - 1) + m
+
+                ∫fₘ = dot(S[S_index_level(level)][m, :], f.(t_current, η[level - 1][I]))
+                η_prevₘ = η_prev_interp(t_current[m])[1]
+                η[level][m + 1] = η[level][m] + Δt_gl[m]*(f(t_current[m], η[level][m]) - f(t_current[m], η_prevₘ) + ∫fₘ)
+            end
+        end
+    end
+
+    return η
 end
 
 function test_IDC_across_groups()
