@@ -6,11 +6,17 @@ using
     LinearAlgebra,
     LaTeXStrings,
     Measures,
-    ProgressMeter
+    ProgressMeter,
+    PyCall
 
 include("ProjectTools.jl")
 
 using .ProjectTools
+
+const MATPLOTLIB = pyimport("matplotlib")
+const RCPARAMS = PyDict(MATPLOTLIB["rcParams"])
+RCPARAMS["mathtext.fontset"] = "cm"
+RCPARAMS["xtick.major.pad"] = 10
 
 """
 Find borders to stability regions (where Am(λΔt)≈1) at various corrections
@@ -111,9 +117,12 @@ function run_correction_levels_polar_stability_borders()
     p = 2
     S = integration_matrix_legendre(p)
     scheme_λ₀ = ((
+    #     SDC_FE_correction_levels,
+    #     NamedTuple{(:N, :p, :S)}((N, p, S))
+    # ),  -0.75 + 0.0im,
         SDC_FE_correction_levels,
         NamedTuple{(:N, :p, :S)}((N, p, S))
-    ),  -0.75 + 0.0im
+    ),  -1.0 + 0.0im,
     )
     correction_levels_indices = 1:p#[1, 2, 3, 4, 10]
     Δt = 1.0
@@ -139,14 +148,18 @@ Find the border to the stability region (where Am(λΔt)≈1) for an integration
 scheme.
 """
 function find_schemes_polar_stability_border(
-    scheme,
-    λ₀;
+    scheme;
     Δt = 1.0,
     θ_res = 100, Δr = 0.01
 )
+    integrator = scheme[1]
+    parameters = scheme[2]
+    N =  scheme[3]
+    λ₀ = scheme[4]
+
     ∂S = zeros(Complex, θ_res)
     r_max = 10
-    θ = range(0, 2pi, θ_res) |> collect
+    θ = range(0, 2pi, θ_res)
     r = 0:Δr:r_max
     @showprogress "Running polar stability analysis on scheme..." for (i, θᵢ) in enumerate(θ)
         λ_old = λ₀
@@ -155,10 +168,10 @@ function find_schemes_polar_stability_border(
 
             ODE_system = ODESystem(
                 (t, y) -> λ*y,
-                Δt*scheme[2].N,
+                Δt*N,
                 1.0 + 0.0im
             )
-            (_, η) = scheme[1](ODE_system, scheme[2]...)
+            (_, η) = integrator(ODE_system, parameters...)
 
             is_λ_stable = (abs.(η[end]) < 1.0)
             if !is_λ_stable
@@ -173,7 +186,7 @@ function find_schemes_polar_stability_border(
 end
 
 function plot_schemes_polar_stability_borders(
-    schemes_λ₀;
+    schemes_with_names;
     Δt = 1.0,
     θ_res = 100, Δr = 0.01,
     x_range = (-2.5, 0.5), y_range = (-2.0, 2.0),
@@ -182,29 +195,30 @@ function plot_schemes_polar_stability_borders(
     # Get border data
     ∂S_array = [
         find_schemes_polar_stability_border(
-            scheme, λ₀;
+            scheme;
             Δt = Δt,
             θ_res = θ_res, Δr = Δr
         )
-        for (scheme, λ₀) in schemes_λ₀
+        for (scheme, _) in schemes_with_names
     ]
     # Plot borders
     border_plot = plot(
-        legend_position = (0.925, 0.225), aspect_ratio = :equal, size = (1200, 1000),
+        aspect_ratio = :equal, size = (900, 900),
         xlims = x_range, ylims = y_range,
         xticks = x_ticks, yticks = y_ticks,
-        xlabel = latexstring("\$Re(\\lambda\\Delta t)\$"),
-        ylabel = latexstring("\$Im(\\lambda\\Delta t)\$"),
-        left_margin = -25.0mm,
-        thickness_scaling = 3.0,
-        legend = false
+        xlabel = "Re(z)",
+        ylabel = "Im(z)",
+        # left_margin = -25.0mm,
+        thickness_scaling = 4.0,
+        legend = (0.7, 0.05),
+        guidefontsize = 10, tickfontsize = 8, legendfontsize = 8
     )
     colours = [:black, :red, :orange, :green, :blue, :purple]
     border_plot_color(i) = colours[(i - 1)%length(colours) + 1]
     for (i, ∂S) in enumerate(∂S_array)
         plot!(
             border_plot, real(∂S), imag(∂S),
-            color = border_plot_color(i)
+            color = border_plot_color(i), label = schemes_with_names[i][2]
         )
     end
 
@@ -219,73 +233,41 @@ function plot_schemes_polar_stability_borders(
 end
 
 function run_polar_stability_borders()
-    S = integration_matrix_uniform(3)
-    schemes_λ₀ = [
-        ((
-            RK1_forward_euler,
-            NamedTuple{(:N,)}((1,))
-        ),  -1.0 + 0.0im
+    lobatto_schemes = [
+        (
+            (
+                SDC_FE_lobatto,
+                NamedTuple{(:number_corrections, :S, :J)}(
+                    (number_corrections, integration_matrix_lobatto(ceil(Int64, number_corrections/2) + 2), 1)
+                ),
+                ceil(Int64, number_corrections/2) + 1,
+                -0.5 + 0.0im
+            ),
+            "p = $(number_corrections + 1)"
+        )
+        for number_corrections in 1:3:10
+    ]
+    schemes_with_names = [
+        (
+            (
+                RK1_forward_euler,
+                (1,),
+                1,
+                -1.0 + 0.0im
+            ),
+            ""
         ),
-        # ((
-        #     RK4_standard,
-        #     NamedTuple{(:N,)}((1,))
-        # ),  -1.75 + 0.0im
-        # ),
-        # ((
-        #     IDC_FE,
-        #     NamedTuple{(:N, :p, :S)}((3, 4, S))
-        # ),  -0.5 + 0.0im
-        # ),
-        ((
-            RIDC_FE_sequential,
-            NamedTuple{(:N, :K, :p, :S)}((3, 3, 4, S))
-        ),  -0.5 + 0.0im
-        ),
-        # ((
-        #     RIDC_FE_sequential,
-        #     NamedTuple{(:N, :K, :p, :S)}((4, 4, 4, S))
-        # ),  -1.0 + 0.0im
-        # ),
-        # ((
-        #     RIDC_FE_sequential,
-        #     NamedTuple{(:N, :K, :p, :S)}((5, 5, 4, S))
-        # ),  -1.0 + 0.0im
-        # ),
-        # ((
-        #     RIDC_FE_sequential,
-        #     NamedTuple{(:N, :K, :p, :S)}((7, 7, 4, S))
-        # ),  -1.0 + 0.0im
-        # ),
-        # ((
-        #     RIDC_FE_sequential,
-        #     NamedTuple{(:N, :K, :p, :S)}((9, 9, 4, S))
-        # ),  -1.0 + 0.0im
-        # ),
-        ((
-            RIDC_FE_sequential,
-            NamedTuple{(:N, :K, :p, :S)}((10, 10, 4, S))
-        ),  -1.0 + 0.0im
-        ),
-        ((
-            RIDC_FE_sequential,
-            NamedTuple{(:N, :K, :p, :S)}((40, 40, 4, S))
-        ),  -1.0 + 0.0im
-        ),
-        ((
-            RIDC_FE_sequential,
-            NamedTuple{(:N, :K, :p, :S)}((100, 100, 4, S))
-        ),  -1.0 + 0.0im
-        ),
+        lobatto_schemes...
     ]
     Δt = 1.0
-    θ_res = 500
-    Δr = 0.002
-    x_range = (-3.0, 2.0)
-    y_range = (-2.0, 2.0)
-    x_ticks = [-2.0, 0.0, 2.0]
-    y_ticks = [-2.0, 0.0, 2.0]
+    θ_res = 500     # Angular resolution
+    Δr = 0.002      # Radial step
+    x_range = (-3.5, 1.5)
+    y_range = (-3.5, 3.5)
+    x_ticks = [-3, -2, -1, 0, 1]
+    y_ticks = [-3, -2, -1, 0, 1, 2, 3]
     plot_schemes_polar_stability_borders(
-        schemes_λ₀;
+        schemes_with_names;
         Δt = Δt,
         θ_res = θ_res, Δr = Δr,
         x_range = x_range, y_range = y_range,
@@ -313,10 +295,10 @@ function find_schemes_cartesian_stability_mesh(
         λ = λ_mesh[i, j]
         ODE_system = ODESystem(
             (t, η) -> λ*η,
-            Δt*scheme[2].N,
+            Δt*scheme[3],
             1.0 + 0.0im
         )
-        (_, η) = scheme[1](ODE_system, ((t, y) -> λ), scheme[2]...)
+        (_, η) = scheme[1](ODE_system, scheme[2]...)
         # Is this λ value stable or not
         is_λ_stable = (abs(η[end]) < 1.0)
         stability_mesh[i, j] = is_λ_stable
@@ -358,8 +340,8 @@ function plot_schemes_cartesian_stability_meshes(
         thickness_scaling = 3.0, xguide = "x",
         xlims = x_range, ylims = y_range,
         xticks = x_ticks, yticks = y_ticks,
-        xlabel=latexstring("\$Re(\\lambda\\Delta t)\$"),
-        ylabel=latexstring("\$Im(\\lambda\\Delta t)\$"),
+        xlabel="Re(z)",
+        ylabel="Im(z)",
     )
     for (i, stability_mesh) in enumerate(stability_meshes)
         heatmap!(
@@ -373,35 +355,129 @@ function plot_schemes_cartesian_stability_meshes(
 end
 
 function run_cartesian_stability_meshes()
-    S = integration_matrix_uniform(3)
+    # number_corrections = 11
+    # M = number_corrections
+    # M = 4*(number_corrections + 1) + 1
+    # S = integration_matrix_uniform(M)
+    # S = integration_matrix_legendre(M - 1)
+    # S = integration_matrix_legendre_RK4(M - 1)
+    lobatto_schemes = [
+        (
+            SDC_FE_lobatto,
+            NamedTuple{(:number_corrections, :S, :J)}(
+                (number_corrections, integration_matrix_lobatto(ceil(Int64, number_corrections/2) + 2), 1)
+            ),
+            ceil(Int64, number_corrections/2) + 1
+        )
+        for number_corrections in 1:5
+    ]
     schemes = [
-        # (RK1_forward_euler, NamedTuple{(:N,)}((10,))),
-        # (RK4_standard, NamedTuple{(:N,)}((10,))),
-        # (IDC_FE, NamedTuple{(:N, :p, :S)}((3, 4, S))),
-        # (RIDC_FE_sequential, NamedTuple{(:N, :K, :p, :S)}((3, 3, 4, S))),
-        # (RIDC_FE_sequential, NamedTuple{(:N, :K, :p, :S)}((4, 4, 4, S))),
-        # (RIDC_FE_sequential, NamedTuple{(:N, :K, :p, :S)}((5, 5, 4, S))),
-        # (RIDC_FE_sequential, NamedTuple{(:N, :K, :p, :S)}((6, 6, 4, S))),
-        # (RIDC_FE_sequential, NamedTuple{(:N, :K, :p, :S)}((100, 100, 4, S))),
-        # (RIDC_FE_sequential, NamedTuple{(:N, :K, :p, :S)}((1000, 1000, 4, S))),
-        # (RIDC_FE_sequential, NamedTuple{(:N, :K, :p, :S)}((10, 10, 4, S))),
-        # (RIDC_FE_sequential, NamedTuple{(:N, :K, :p, :S)}((20, 20, 4, S))),
-        # (RIDC_FE_sequential, NamedTuple{(:N, :K, :p, :S)}((40, 40, 4, S))),
-        # (RIDC_FE_sequential, NamedTuple{(:N, :K, :p, :S)}((100, 100, 4, S))),
-        # (backward_Euler_1D, NamedTuple{(:N,)}((3,))),
-        (IDC_Euler_implicit_1D, NamedTuple{(:N, :p, :S)}((3, 4, S))),
+        (
+            RK1_forward_euler,
+            NamedTuple{(:N,)}((1,)),
+            1
+        ),
+        lobatto_schemes...
     ]
     Δt = 1.0
-    x_res = 500
-    y_res = 500
-    x_range = (-5.0, 40.0)
-    y_range = (-20.0, 20.0)
-    x_ticks = [0.0, 10.0, 20.0, 30.0, 40.0]
-    y_ticks = [-20.0, -10.0, 0.0, 10.0, 20.0]
+    x_res = 100
+    y_res = 100
+    x_range = (-4, 2)
+    y_range = (-4, 4)
+    # x_ticks = [0.0, 10.0, 20.0, 30.0, 40.0]
+    # y_ticks = [-20.0, -10.0, 0.0, 10.0, 20.0]
     plot_schemes_cartesian_stability_meshes(
         schemes;
         Δt = Δt,
         x_res = x_res, y_res = y_res,
+        x_range = x_range, y_range = y_range
+        # x_ticks = x_ticks, y_ticks = y_ticks
+    )
+end
+
+
+
+function polar_stability_borders_SDC_FE_lobatto()
+    lobatto_schemes = [
+        (
+            (
+                SDC_FE_lobatto,
+                NamedTuple{(:number_corrections, :S, :J)}(
+                    (number_corrections, integration_matrix_lobatto(ceil(Int64, number_corrections/2) + 2), 1)
+                ),
+                ceil(Int64, number_corrections/2) + 1,
+                -0.5 + 0.0im
+            ),
+            "p = $(number_corrections + 1)"
+        )
+        for number_corrections in 1:3:10
+    ]
+    schemes_with_names = [
+        (
+            (
+                RK1_forward_euler,
+                (1,),
+                1,
+                -1.0 + 0.0im
+            ),
+            ""
+        ),
+        lobatto_schemes...
+    ]
+    Δt = 1.0
+    θ_res = 500     # Angular resolution
+    Δr = 0.002      # Radial step
+    x_range = (-3.5, 1.5)
+    y_range = (-3.5, 3.5)
+    x_ticks = [-3, -2, -1, 0, 1]
+    y_ticks = [-3, -2, -1, 0, 1, 2, 3]
+    plot_schemes_polar_stability_borders(
+        schemes_with_names;
+        Δt = Δt,
+        θ_res = θ_res, Δr = Δr,
+        x_range = x_range, y_range = y_range,
+        x_ticks = x_ticks, y_ticks = y_ticks
+    )
+end
+
+function polar_stability_borders_SDC_FE_legendre()
+    legendre_schemes = [
+        (
+            (
+                SDC_FE_legendre,
+                NamedTuple{(:number_corrections, :S, :J)}(
+                    (number_corrections, integration_matrix_legendre(number_corrections + 2), 1)
+                ),
+                number_corrections + 1,
+                -0.5 + 0.0im
+            ),
+            "p = $(number_corrections + 1)"
+        )
+        for number_corrections in 1:3:10
+    ]
+    schemes_with_names = [
+        (
+            (
+                RK1_forward_euler,
+                (1,),
+                1,
+                -1.0 + 0.0im
+            ),
+            "FE"
+        ),
+        legendre_schemes...
+    ]
+    Δt = 1.0
+    θ_res = 500     # Angular resolution
+    Δr = 0.002      # Radial step
+    x_range = (-3.5, 1.5)
+    y_range = (-3.5, 3.5)
+    x_ticks = [-3, -2, -1, 0, 1]
+    y_ticks = [-3, -2, -1, 0, 1, 2, 3]
+    plot_schemes_polar_stability_borders(
+        schemes_with_names;
+        Δt = Δt,
+        θ_res = θ_res, Δr = Δr,
         x_range = x_range, y_range = y_range,
         x_ticks = x_ticks, y_ticks = y_ticks
     )

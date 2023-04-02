@@ -1,10 +1,12 @@
 """
 Key:
+ODE -> Ordinary Differential equation
+IVP -> Initial Value Problem
+FE -> Forward Euler time-stepping scheme
+RKp -> Runge-Kutta method of order p
 IDC -> Integral Deferred Correction
 RIDC -> Revisionist Integral Deferred Correction
-ODE -> Ordinary Differential equation
-FE -> Forward Euler time-stepping scheme
-RK -> Runge-Kutta multi-stage time-stepping scheme
+RSDC -> Revisionist Spectral Deferred Correction
 """
 module ProjectTools
 
@@ -17,49 +19,76 @@ using
     BarycentricInterpolation
 
 export
+    # Error calculation
     err_abs,
     err_rel,
-    err_cum,
     err_norm,
     err_max,
-
+    # Test IVPs
     ODESystem,
     @unpack_ODESystem,
     ODETestSystem,
     @unpack_ODETestSystem,
     Butcher_p53_system,
     sqrt_system,
+    trig_system,
     cube_system,
     stiff_system_1,
-
+    SDC_RK_system,
+    log_system,
+    # Runge-Kutta methods
     RKMethod,
     @unpack_RKMethod,
     RK_time_step_explicit,
     RK4_standard,
+    RK3_Kutta,
     RK2_midpoint,
-    RK2_trapezoid,
+    RK2_Heuns,
     RK1_forward_euler,
     RK8_Cooper_Verner,
-
+    # Integration matrix and polynomial interpolayion
     integration_matrix,
     integration_matrix_uniform,
+    integration_matrix_uniform_RK4,
     integration_matrix_legendre,
-
-    IDC_FE,
-    IDC_FE_correction_levels,
-    IDC_RK2_trapezoid,
-    IDC_RK_general,
-    get_IDC_RK_group_poly,
+    integration_matrix_legendre_RK4,
+    integration_matrix_lobatto,
+    integration_matrix_lobatto_RK4,
+    INTEGRATION_MATRIX_ARRAY_UNIFORM,
+    INTEGRATION_MATRIX_ARRAY_LEGENDRE,
+    INTEGRATION_MATRIX_ARRAY_LOBATTO,
+    fill_integration_matrix_array_uniform,
+    fill_integration_matrix_array_legendre,
+    fill_integration_matrix_array_lobatto,
+    interpolation_poly,
+    ## IDC ALGORITHMS
+    # IDC
     IDC_FE_single,
-    IDC_FE_single_correction_levels,
-    SDC_FE,
-    SDC_FE_correction_levels,
-    SDC_FE_single,
-    RIDC_FE_sequential,
-    RIDC_FE_sequential_correction_levels,
-    RIDC_FE_sequential_reduced_stencil,
-    RIDC_RK2_trapeoid_sequential,
-
+    IDC_FE,
+    IDC_RK2_Heuns,
+    IDC_RK4,
+    IDC_RK_general,
+    # SDC
+    sandwich_special_nodes,
+    SDC_FE_legendre_single,
+    SDC_FE_lobatto_single,
+    SDC_FE_legendre,
+    SDC_RK4_legendre,
+    SDC_FE_lobatto,
+    SDC_RK2_Heuns_lobatto,
+    SDC_RK4_lobatto,
+    # RIDC
+    RIDC_FE,
+    RIDC_FE_reduced_stencil,
+    RIDC_RK2_Heuns_reduced_stencil,
+    RIDC_RK4,
+    # RSDC
+    RSDC_FE_uniform,
+    RSDC_RK4_uniform,
+    RSDC_FE_lobatto,
+    RSDC_FE_lobatto_reduced_stencil,
+    RSDC_RK4_lobatto,
+    # Implicit methods
     Newton_iterate,
     Newton_iterate_1D,
     backward_Euler_1D,
@@ -67,12 +96,15 @@ export
     IDC_Euler_implicit_1D_correction_levels
 
 
-err_abs(exact, approx) = abs.(exact - approx)
-err_rel(exact, approx) = err_abs(exact, approx) ./ abs.(exact)
-err_cum(exact, approx) = [sum(err_abs(exact[1:i], approx[1:i])) for i in 1:length(data_correct)]
-err_norm(exact, approx, p) = norm(err_abs(exact, approx), p)
-err_max(exact, approx)  = maximum(err_abs(exact, approx))
+### STUFF FOR TESTING
 
+err_abs(exact, approx) = abs.(exact .- approx)
+err_rel(exact, approx) = err_abs(exact, approx) ./ abs.(exact)
+err_norm(exact, approx, p) = norm(err_abs(exact, approx), p)
+err_max(exact, approx) = maximum(err_abs(exact, approx))
+
+
+# const ODEDomain = Union{Number, Vector{Number}}
 
 """
 Structure to contain an ODE system with no exact solution
@@ -81,16 +113,16 @@ Structure to contain an ODE system with no exact solution
     t_e::Float64 - end time, y(t_e) is the solution at the final time
     y_s::Float64 - starting value y(t_s) = y_s
 """
-@with_kw struct ODESystem{T<:Function, S<:Number}
+@with_kw struct ODESystem{T<:Function, S}
     f::T
     t_s::Float64
     t_e::Float64
     y_s::S
-    ODESystem{T, S}(f, t_s, t_e, y_s) where {T<:Function, S<:Number} = (t_s < t_e) ? new(f, t_s, t_e, y_s) : error("time t_s must be less than time t_e")
+    ODESystem{T, S}(f, t_s, t_e, y_s) where {T<:Function, S} = (t_s < t_e) ? new(f, t_s, t_e, y_s) : error("time t_s must be less than time t_e")
 end
 
 # Point(x::T, y::T) where {T<:Real} = Point{T}(x,y)
-ODESystem(f::T, t_s, t_e, y_s::S) where {T<:Function, S<:Number} = ODESystem{T, S}(f, t_s, t_e, y_s)
+ODESystem(f::T, t_s, t_e, y_s::S) where {T<:Function, S} = ODESystem{T, S}(f, t_s, t_e, y_s)
 ODESystem(f, t_e, y_s) = ODESystem(f, 0.0, t_e, y_s)
 
 """
@@ -113,6 +145,7 @@ const Butcher_p53_system = ODETestSystem(
     0.4,
     t -> (1 + t)/(t^2 + 1/0.4)
 )
+
 """ https://doi.org/10.1137/09075740X """
 const sqrt_system = ODETestSystem(
     (t, y) -> 4t*sqrt(y),
@@ -120,6 +153,24 @@ const sqrt_system = ODETestSystem(
     1.0 + 0.0im,
     t -> (1 + t^2)^2
 )
+
+""" https://doi.org/10.1137/09075740X """
+const f_trig(t, y) = begin
+    one_minus_sqr_mag = 1 - y[1]^2 - y[2]^2
+    [
+        -y[2] +  y[1]*one_minus_sqr_mag,
+         y[1] + 3y[2]*one_minus_sqr_mag
+    ]
+end
+const y_trig(t) = [cos(t), sin(t)]
+const trig_system = ODETestSystem(
+    f_trig,
+    10.0,
+    [1.0, 0.0],
+    y_trig
+)
+
+
 const cube_system = ODETestSystem(
     (t, y) -> t^3,
     5.0,
@@ -134,6 +185,22 @@ const stiff_system_1 = ODETestSystem(
     t -> exp(4t)
 )
 
+const SDC_RK_system = ODETestSystem(
+    (t, y) -> y,
+    1.0,
+    1.0,
+    t -> exp(t)
+)
+
+const log_system = ODETestSystem(
+    (t, y) -> 0.5sin(t)*exp(y),
+    π,
+    log(2) - log(3),
+    t -> -log(1 + 0.5cos(t))
+)
+
+
+### RUNGE-KUTTA METHODS
 
 """
 Represents an arbitrary Runge-Kutta method using its Butcher Tableau. Contains:
@@ -183,7 +250,7 @@ function RK_time_step_explicit(
 
     k = [f(t_i, u_i, other_coords...)]
     for r in axes(b)[1][2:end]
-        k_sum = zeros(typeof(u_i[1]), size(u_i))
+        k_sum = zeros(eltype(u_i), size(u_i))
         for l in axes(b)[1][1]:(r - 1)
             k_sum .+= a[r, l].*k[l]
         end
@@ -233,7 +300,7 @@ function RK_correction_time_step_explicit(
 end
 
 """ Canonical RK4 method. """
-RK4_standard = RKMethod(
+const RK4_standard = RKMethod(
     a = [
         0//1  0//1  0//1  0//1;
         1//2  0//1  0//1  0//1;
@@ -246,8 +313,22 @@ RK4_standard = RKMethod(
     ],
     order_of_accuracy = 4
 )
+""" Kutta's third order Runge-Kutta method. """
+const RK3_Kutta = RKMethod(
+    a = [
+        0//1  0//1  0//1;
+        1//2  0//1  0//1;
+        -1//1 2//1  0//1;
+    ], b = [
+        1//6, 2//3, 1//6
+    ], c = [
+        0//1, 1//2, 1//1
+    ],
+    order_of_accuracy = 3
+
+)
 """ Midpoint Runge-Kutta method. """
-RK2_midpoint = RKMethod(
+const RK2_midpoint = RKMethod(
     a = [
         0//1  0//1;
         1//2  0//1
@@ -259,7 +340,7 @@ RK2_midpoint = RKMethod(
     order_of_accuracy = 2
 )
 """ Second order trapezoidal Runge-Kutta method (A.K.A. Heun's method) """
-RK2_trapezoid = RKMethod(
+const RK2_Heuns = RKMethod(
     a = [
         0//1  0//1;
         1//1  0//1
@@ -271,13 +352,14 @@ RK2_trapezoid = RKMethod(
     order_of_accuracy = 2
 )
 """ Forward Euler method. """
-RK1_forward_euler = RKMethod(
+const RK1_forward_euler = RKMethod(
     a = fill(0, 1, 1),
     b = [1],
     c = [0],
     order_of_accuracy = 1
 )
-RK8_Cooper_Verner = RKMethod(
+""" Eighth order Cooper-Verner method. Doesn't seem to work. """
+const RK8_Cooper_Verner = RKMethod(
     a = Float64[
         0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0;
         0.5 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0;
@@ -304,7 +386,6 @@ RK8_Cooper_Verner = RKMethod(
     order_of_accuracy = 8
 )
 
-
 function RK_general(
     ODE_system::ODESystem,
     N;
@@ -314,8 +395,7 @@ function RK_general(
     @unpack_ODESystem ODE_system
     t = range(t_s, t_e, N + 1) |> collect
     Δt = (t_e - t_s)/N
-    η = zeros(typeof(y_s), N + 1)
-    η[1] = y_s
+    η = initialise_η(y_s, N, 0)
 
     for k in 1:N
         η[k + 1] = η[k] + RK_time_step_explicit(
@@ -330,6 +410,8 @@ end
 """ Any RKMethod is callable to solve a given ODE_system over N time intervals  """
 (RK_method::RKMethod)(ODE_system::ODESystem, N) = RK_general(ODE_system, N; RK_method = RK_method)
 
+
+### CALCULATING INTEGRATION MATRICES
 
 """  """
 function integration_matrix(t_quadrature_nodes, t_time_steps)
@@ -351,18 +433,163 @@ function integration_matrix(t_quadrature_nodes, t_time_steps)
     ]
 end
 
-"""  """
-function integration_matrix_uniform(N)
-    t_nodes = collect(0.0:N)
-    return integration_matrix(t_nodes, t_nodes)
+""" All of these are a function of the number of quadrature points, n """
+
+integration_matrix_uniform(n) = integration_matrix(0.0:(n - 1), 0.0:(n - 1))
+
+integration_matrix_uniform_RK4(n) = integration_matrix(0.0:(n - 1), 0.0:0.5:(n - 1))
+
+function integration_matrix_legendre(n)
+    legendre_nodes = gausslegendre(n)[1]
+    return integration_matrix(legendre_nodes, vcat(-1, legendre_nodes, 1))
 end
 
-"""  """
-function integration_matrix_legendre(N)
-    gl_quad = gausslegendre(N)
-    return integration_matrix(gl_quad[1], vcat(-1, gl_quad[1], 1))
+function integration_matrix_legendre_RK4(n)
+    legendre_nodes = gausslegendre(n)[1]
+    legendre_full_nodes = vcat(-1, legendre_nodes, 1)
+    legendre_half_nodes = [legendre_full_nodes[1]]
+    for i in axes(legendre_full_nodes, 1)[1:end - 1]
+        half_node = 0.5*(legendre_full_nodes[i] + legendre_full_nodes[i + 1])
+        push!(legendre_half_nodes, half_node)
+        push!(legendre_half_nodes, legendre_full_nodes[i + 1])
+    end
+
+    return integration_matrix(legendre_nodes, legendre_half_nodes)
 end
 
+function integration_matrix_lobatto(n)
+    lobatto_nodes = gausslobatto(n)[1]
+    return integration_matrix(lobatto_nodes, lobatto_nodes)
+end
+
+function integration_matrix_lobatto_RK4(n)
+    lobatto_nodes = gausslobatto(n)[1]
+    lobatto_half_nodes = [lobatto_nodes[1]]
+    for i in axes(lobatto_nodes, 1)[1:end - 1]
+        half_node = 0.5*(lobatto_nodes[i] + lobatto_nodes[i + 1])
+        push!(lobatto_half_nodes, half_node)
+        push!(lobatto_half_nodes, lobatto_nodes[i + 1])
+    end
+    return integration_matrix(lobatto_nodes, lobatto_half_nodes)
+end
+
+"""
+For cases where we are using multiple large weights matrices where we have a
+large number of quadrature nodes, it is beneficial to have them precalculated. A
+better solution would be to calculate these once and store them in an external
+file (probably .csv for conveneience) somewhere, to be fetched as needed.
+
+These matrices are ordered by the number of quadrature points they use. Notice,
+the matrix for closed quadature nodes (uniform and lobatto) must start with a
+single undefined element as there is no weights matrix defined for these using a
+single node.
+"""
+const INTEGRATION_MATRIX_ARRAY_UNIFORM = Vector{Matrix{Float64}}(undef, 1)
+const INTEGRATION_MATRIX_ARRAY_LEGENDRE = Vector{Matrix{Float64}}(undef, 0)
+const INTEGRATION_MATRIX_ARRAY_LOBATTO = Vector{Matrix{Float64}}(undef, 1)
+
+"""
+Giving only maximum size as argument is reasonable as the matrices of smaller
+size are significantly easier to generate, so they are of little cost. This also
+means the above 'INTEGRATION_MATRIX_ARRAY_...'s are automatically ordered.
+"""
+
+function fill_integration_matrix_array_uniform(max_size)
+    current_size = size(INTEGRATION_MATRIX_ARRAY_UNIFORM, 1)
+    (current_size >= max_size) && throw(error("now new matrices needed"))
+    number_quadrature_nodes_array = (current_size + 1):max_size
+    push!(INTEGRATION_MATRIX_ARRAY_UNIFORM, [integration_matrix_uniform(number_q_nodes) for number_q_nodes in number_quadrature_nodes_array]...)
+    nothing
+end
+
+function fill_integration_matrix_array_legendre(max_size)
+    current_size = size(INTEGRATION_MATRIX_ARRAY_LEGENDRE, 1)
+    (current_size >= max_size) && throw(error("now new matrices needed"))
+    number_quadrature_nodes_array = (current_size + 1):max_size
+    push!(INTEGRATION_MATRIX_ARRAY_LEGENDRE, [integration_matrix_legendre(number_q_nodes) for number_q_nodes in number_quadrature_nodes_array]...)
+    nothing
+end
+
+function fill_integration_matrix_array_lobatto(max_size)
+    current_size = size(INTEGRATION_MATRIX_ARRAY_LOBATTO, 1)
+    (current_size >= max_size) && throw(error("now new matrices needed"))
+    number_quadrature_nodes_array = (current_size + 1):max_size
+    push!(INTEGRATION_MATRIX_ARRAY_LOBATTO, [integration_matrix_lobatto(number_q_nodes) for number_q_nodes in number_quadrature_nodes_array]...)
+    nothing
+end
+
+
+""" assume range(t_values) = 1 """
+function interpolation_polynomials(t_for_interp)
+    scipy_interpolate = pyimport("scipy.interpolate")
+
+    p_func = []
+    for i in axes(t_for_interp)[1]
+        yᵢ = zeros(Float64, size(t_for_interp))
+        yᵢ[i] = 1.0
+        pᵢ_coeffs = scipy_interpolate.lagrange(t_for_interp, yᵢ).c |> reverse # Lagrange interpolant to yᵢ at t
+        pᵢ_func(x) = sum(coeff*x^(j - 1) for (j, coeff) in enumerate(pᵢ_coeffs))
+        push!(p_func, pᵢ_func)
+    end
+    return p_func
+end
+
+function interpolation_func(η_values, p_func, t_start, t_end)
+    f(t) = sum(η_values[i]*p_func[i](t) for i in axes(p_func, 1))
+    return t -> f((t - t_start)/(t_end - t_start))
+end
+
+### IDC ALGORITHMS
+"""
+These are algorithms using the IDC framework.
+
+Necessary arguments:
+ODE_system:
+    An ODE system without exact solution available. Contains f, [t_s, t_e] and y_s.
+number_corrections:
+    The number of IDC corrections to perform on top of the initial prediction.
+S (or S_array when relevant):
+    An integration matrix, contains quadrature weights for integration over a region
+    [t_i, t_{i+1}].
+(for RIDC) K:
+    The number of time steps to perform before a 'restart'.
+
+Potential arguments:
+J:
+    Number of groups IDC is performed on.
+N:
+    Total number of nodes to integrate over.
+p:
+    Desired order of approximation.
+M:
+    The number of subintervals per group.
+
+Should return a tuple (t, η) where:
+t:
+    The time values where the solution to ODE_system has been approximated.
+η:
+    A matrix containing approximants at all correction levels
+
+All functions should be suitable for non-scalar systems.
+"""
+
+function initialise_η_zeros(y_s, N, number_corrections)
+    η = []
+    if typeof(y_s) <: Number
+        η = zeros(typeof(y_s), N + 1, number_corrections + 1)
+    elseif typeof(y_s) <: Vector
+        η = fill(zeros(eltype(y_s), size(y_s)[1]), N + 1, number_corrections + 1)
+    end
+    return η
+end
+
+function initialise_η(y_s, N, number_corrections)
+    η = initialise_η_zeros(y_s, N, number_corrections)
+    for level in 1:(number_corrections + 1)
+        η[1, level] = y_s
+    end
+    return η
+end
 
 """
 Algorithm from https://doi.org/10.1137/09075740X
@@ -374,153 +601,154 @@ An integration matrix S = integration_matrix_equispaced(p - 1) should be used
 """
 function IDC_FE(
     ODE_system::ODESystem,
-    N, p, S
+    number_corrections, S, J
 )
     # Initialise variables
     @unpack_ODESystem ODE_system
-    t = range(t_s, t_e, N + 1) |> collect
-    Δt = (t_e - t_s)/N
-    M = p - 1
-    J = fld(N, M)
-    η = zeros(typeof(y_s), N + 1)
-    η[1] = y_s
-
-    for j in 0:(J - 1)
-        # Prediction loop
-        for m in 1:M
-            k = j*M + m
-            η[k + 1] = η[k] + Δt*f(t[k], η[k])
-        end
-        # Correction loop
-        I = (j*M + 1):((j + 1)*M + 1)
-        for _ in 2:p
-            η_old = copy(η)
-            for m in 1:M
-                k = j*M + m
-                ∫fₖ = dot(S[m, :], f.(t[I], η_old[I]))
-                η[k + 1] = η[k] + Δt*(f(t[k], η[k]) - f(t[k], η_old[k])) + Δt*∫fₖ
-            end
-        end
-    end
-
-    return (t, η)
-end
-function IDC_FE_correction_levels(
-    ODE_system::ODESystem,
-    J, M, number_corrections, S
-)
-    # Initialise variables
-    @unpack_ODESystem ODE_system
+    M = number_corrections
     N = J*M
-    p = number_corrections + 1
-    t = range(t_s, t_e, N + 1) |> collect
+    t = range(t_s, t_e, N + 1)
     Δt = (t_e - t_s)/N
-    η = zeros(typeof(y_s), N + 1, p)
-    η[1, :] .= y_s
+    η = initialise_η(y_s, N, number_corrections)
 
     for j in 0:(J - 1)
         # Prediction loop
         for m in 1:M
             k = j*M + m
-            η[k + 1, 1] = η[k, 1] + Δt*f(t[k], η[k, 1])
+            η[k + 1, 1] = η[k, 1] .+ Δt.*f(t[k], η[k, 1])
         end
         # Correction loop
         I = (j*M + 1):((j + 1)*M + 1)
-        for l in 2:p
+        for level in 2:(number_corrections + 1)
+            f_group = f.(t[I], η[I, level - 1])
             for m in 1:M
                 k = j*M + m
-                ∫fₖ = dot(S[m, :], f.(t[I], η[I, l - 1]))
-                η[k + 1, l] = η[k, l] + Δt*(f(t[k], η[k, l]) - f(t[k], η[k, l - 1])) + Δt*∫fₖ
+                ∫fₘ = [sum(S[m, j]*f_group[j][i] for j in axes(S, 2)) for i in axes(y_s, 1)]
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                end
+                η[k + 1, level] = η[k, level] .+ Δt.*(f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])) .+ Δt.*∫fₘ
             end
+        end
+        # At the end of group evaluation, give most corrected value to all nodes
+        # for next group's evaluation.
+        # (j == J - 1) && continue
+        k_end = (j + 1)*M + 1
+        for level in 1:number_corrections
+            η[k_end, level] = η[k_end, end]
         end
     end
 
     return (t, η)
 end
 
-"""
-Same algorithm as 'IDC_FE' but storing all prediction and correction
-levels in a matrix output. This is useful for calculating stability regions at
-different correction stages.
-
-An integration matrix S = integration_matrix_equispaced(p - 1) should be used
-"""
-function IDC_FE_correction_levels(
+function IDC_RK2_Heuns(
     ODE_system::ODESystem,
-    N, p, S
+    number_corrections, S, J
 )
     # Initialise variables
     @unpack_ODESystem ODE_system
+    M = 2*(number_corrections + 1) - 1
+    N = J*M
     t = range(t_s, t_e, N + 1) |> collect
     Δt = (t_e - t_s)/N
-    M = p - 1
-    J = fld(N, M)
-    η = zeros(typeof(y_s), N + 1, p)
-    η[1, :] .= y_s
+    η = initialise_η(y_s, N, number_corrections)
 
     for j in 0:(J - 1)
         # Prediction loop
         for m in 1:M
             k = j*M + m
-            η[k + 1, 1] = η[k, 1] + Δt*f(t[k], η[k, 1])
+            stage_1 = f(t[k], η[k, 1])
+            stage_2 = f(t[k + 1], η[k, 1] .+ Δt.*stage_1)
+            η[k + 1, 1] = η[k, 1] .+ 0.5Δt.*(stage_1 .+ stage_2)
         end
         # Correction loop
         I = (j*M + 1):((j + 1)*M + 1)
-        for l in 2:p
+        for level in 2:(number_corrections + 1)
             for m in 1:M
                 k = j*M + m
-                ∫fₖ = dot(S[m, :], f.(t[I], η[I, l - 1]))
-                η[k + 1, l] = η[k, l] + Δt*(f(t[k], η[k, l]) - f(t[k], η[k, l - 1])) + Δt*∫fₖ
+                f_group = f.(t[I], η[I, level - 1])
+                ∫fₘ = [sum(S[m, j]*f_group[j][i] for j in axes(S, 2)) for i in axes(y_s, 1)]
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                end
+                stage_1 = f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])
+                stage_2 = f(t[k + 1], η[k, level] .+ Δt.*stage_1 .+ Δt.*∫fₘ) .- f(t[k + 1], η[k + 1, level - 1])
+                η[k + 1, level] = η[k, level] .+ 0.5Δt.*(stage_1 .+ stage_2) .+ Δt.*∫fₘ
             end
+        end
+        # At the end of group evaluation, give most corrected value to all nodes
+        # for next group's evaluation.
+        # (j == J - 1) && continue
+        k_end = (j + 1)*M + 1
+        for level in 1:number_corrections
+            η[k_end, level] = η[k_end, end]
         end
     end
 
     return (t, η)
 end
 
-"""
-An integration matrix S = integration_matrix_equispaced(p - 1) should be used
-"""
-function IDC_RK2_trapezoid(
+function IDC_RK4(
     ODE_system::ODESystem,
-    N, p, S
+    number_corrections, S, J
 )
-    # Initialise variables
     @unpack_ODESystem ODE_system
-    t = range(t_s, t_e, N + 1) |> collect
+    M = 4*(number_corrections + 1) - 1
+    N = J*M
+    t = range(t_s, t_e, N + 1)
     Δt = (t_e - t_s)/N
-    M = p - 1
-    J = fld(N, M)
-    η = zeros(typeof(y_s), N + 1)
-    η[1] = y_s
+    η = initialise_η(y_s, N, number_corrections)
+    interp_polys = interpolation_polynomials((0:M)./M)
 
+    # Prediction loop
     for j in 0:(J - 1)
-        # Prediction loop
         for m in 1:M
             k = j*M + m
-            η[k + 1] = RK_time_step_explicit(f, Δt, t[k], η[k]; RK_method = RK2_trapezoid)
+            stage_1 = f(t[k], η[k, 1])
+            stage_2 = f(t[k] + 0.5Δt, η[k, 1] .+ 0.5Δt.*stage_1)
+            stage_3 = f(t[k] + 0.5Δt, η[k, 1] .+ 0.5Δt.*stage_2)
+            stage_4 = f(t[k] + Δt, η[k, 1] .+ Δt.*stage_3)
+            η[k + 1, 1] = η[k, 1] .+ (stage_1 .+ 2stage_2 .+ 2stage_3 .+ stage_4).*Δt/6
         end
+
         # Correction loop
-        I = (j*M + 1):((j + 1)*M + 1)   # Quadrature nodes
-        for _ in 2:fld(p, 2)
-            η_old = copy(η)
+        I_group = (j*M + 1):((j + 1)*M + 1)
+        for level in 2:(number_corrections + 1)
+            f_group = f.(t[I_group], η[I_group, level - 1])
             for m in 1:M
                 k = j*M + m
-                ∫fₖ = dot(S[m, :], f.(t[I], η_old[I]))
-                η[k + 1] = RK_correction_time_step_explicit(
-                    f, Δt, t[k], η[k], ∫fₖ, [η_old[k], η_old[k + 1]];
-                    RK_method = RK2_trapezoid
-                )
+
+                ∫fₘ_1 = Δt.*[sum(S[2*m - 1, s]*f_group[s][i] for s in axes(S, 2)) for i in axes(y_s, 1)]
+                ∫fₘ_2 = Δt.*[sum(S[2*m, s]*f_group[s][i] for s in axes(S, 2)) for i in axes(y_s, 1)]
+                ∫fₘ = ∫fₘ_1 .+ ∫fₘ_2
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                    ∫fₘ_1 = ∫fₘ_1[1]
+                end
+
+                η_prev_interp = interpolation_func(η[I_group, level - 1], interp_polys, t[I_group][1], t[I_group][end])
+                η_prev_midₘ = η_prev_interp(t[k] + 0.5Δt)
+
+                stage_1 = f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])
+                stage_2 = f(t[k] + 0.5Δt, η[k, level] .+ 0.5Δt.*stage_1 .+ ∫fₘ_1) .- f(t[k] + 0.5Δt, η_prev_midₘ)
+                stage_3 = f(t[k] + 0.5Δt, η[k, level] .+ 0.5Δt.*stage_2 .+ ∫fₘ_1) .- f(t[k] + 0.5Δt, η_prev_midₘ)
+                stage_4 = f(t[k + 1], η[k, level] .+ Δt.*stage_3 .+ ∫fₘ).- f(t[k + 1], η[k + 1, level - 1])
+                η[k + 1, level] = η[k, level] .+ (Δt/6).*(stage_1 .+ stage_2.*2 .+ stage_3.*2 .+ stage_4) .+ ∫fₘ
             end
+        end
+        # At the end of group evaluation, give most corrected value to all nodes
+        # for next group's evaluation.
+        # (j == J - 1) && continue
+        k_end = (j + 1)*M + 1
+        for level in 1:number_corrections
+            η[k_end, level] = η[k_end, end]
         end
     end
 
     return (t, η)
 end
 
-"""
-An integration matrix S = integration_matrix_equispaced(p - 1) should be used
-"""
 function IDC_RK_general(
     ODE_system::ODESystem,
     N, p, S;
@@ -576,68 +804,61 @@ Integral deferred correction with a single subinterval (uses static
 interpolatory quadrature over all N + 1 nodes). To improve this could use a
 reduced size integration matrix of minimum necessary size (p - 1 = M) with
 rolling usage of interpolation nodes.
-
-An integration matrix S = integration_matrix_equispaced(N) is used
 """
 function IDC_FE_single(
     ODE_system::ODESystem,
-    N, p, S
+    number_corrections, S, N
 )
     # Initialise variables
     @unpack_ODESystem ODE_system
     t = range(t_s, t_e, N + 1) |> collect
     Δt = (t_e - t_s)/N
-    η = zeros(typeof(y_s), N + 1)
-    η[1] = y_s
+    η = initialise_η(y_s, N, number_corrections)
 
     # Prediction loop
     for m in 1:N
-        η[m + 1] = η[m] + Δt*f(t[m], η[m])
+        η[m + 1, 1] = η[m, 1] .+ Δt.*f(t[m], η[m, 1])
     end
     # Correction loop
     I = 1:(N + 1)
-    for _ in 2:p
-        η_old = copy(η)
+    for level in 2:(number_corrections + 1)
+        f_group = f.(t[I], η[I, level - 1])
         for m in 1:N
-            ∫fₖ = dot(S[m, :], f.(t[I], η_old[I]))
-            η[m + 1] = η[m] + Δt*(f(t[m], η[m]) - f(t[m], η_old[m])) + Δt*∫fₖ
+            ∫fₘ = [sum(S[m, j]*f_group[j][i] for j in axes(S, 2)) for i in axes(y_s, 1)]
+            if typeof(y_s) <: Number
+                ∫fₘ = ∫fₘ[1]
+            end
+            η[m + 1, level] = η[m, level] .+ Δt.*(f(t[m], η[m, level]) .- f(t[m], η[m, level - 1])) .+ Δt.*∫fₘ
         end
     end
 
     return (t, η)
 end
 
-"""
-Same algorithm as 'IDC_FE_single' but storing all prediction and correction
-levels. This is useful for calculating stability regions at different correction
-stages.
 
-An integration matrix S = integration_matrix_equispaced(N) is used
-"""
-function IDC_FE_single_correction_levels(
-    ODE_system::ODESystem,
-    N, p, S
+## NON-UNIFORM NODES
+
+function sandwich_special_nodes(
+    special_nodes, is_closed::Bool, t_s, t_e, J
 )
-    # Initialise variables
-    @unpack_ODESystem ODE_system
-    t = range(t_s, t_e, N + 1) |> collect
-    Δt = (t_e - t_s)/N
-    η = zeros(typeof(y_s), N + 1, p)
-    η[1, :] .= y_s
-
-    # Prediction loop
-    for m in 1:N
-        η[m + 1, 1] = η[m, 1] + Δt*f(t[m], η[m, 1])
-    end
-    # Correction loop
-    for l in 2:p
-        for m in 1:N
-            ∫fₖ = dot(S[m, :], f.(t[:], η[:, l - 1]))
-            η[m + 1, l] = η[m, l] + Δt*(f(t[m], η[m, l]) - f(t[m], η[m, l - 1])) + Δt*∫fₖ
+    t_return = []
+    group_size = (t_e - t_s)/J
+    group_scale_factor = group_size/2
+    if is_closed
+        for j in 0:(J - 1)
+            current_group_nodes = (special_nodes[1:end - 1] .- special_nodes[1]).*group_scale_factor .+ j*group_size
+            push!(t_return, current_group_nodes...)
+        end
+    else
+        for j in 0:(J - 1)
+            push!(t_return, j*group_size)
+            current_group_nodes = (special_nodes .+ 1).*group_scale_factor .+ j*group_size
+            push!(t_return, current_group_nodes...)
         end
     end
+    push!(t_return, t_e)
 
-    return (t, η)
+    return (t_return, group_scale_factor)
 end
 
 """
@@ -651,209 +872,399 @@ with this step.
 
 It is not possible to make a reduced stencil algorithm for this as our legendre
 nodes are fixed within their subintervals.
-
-An integration matrix S = integration_matrix_legendre(p) should be used
 """
-function SDC_FE(
+function SDC_FE_legendre_single(
     ODE_system::ODESystem,
-    N, p, S
+    number_corrections, S, N
 )
     # Initialise variables
     @unpack_ODESystem ODE_system
-    M = p + 1
-    J = fld(N, M)
-    η = zeros(typeof(y_s), N + 1)
-    η[1] = y_s
-    (t, group_scale) = calculate_legendre_time_discretisation(t_s, t_e, p, J)
+    t_legendre = gausslegendre(N - 1)[1]
+    (t, group_scale_factor) = sandwich_special_nodes(t_legendre, false, t_s, t_e, 1)
     Δt = t[2:end] .- t[1:end - 1]   # No longer constant
-
-    for j in 0:(J - 1)
-        # Prediction loop
-        for m in 1:M
-            k = j*M + m
-            η[k + 1] = η[k] + Δt[k]*f(t[k], η[k])
-        end
-        # Correction loop
-        I = (j*M + 2):((j + 1)*M)   # Use non-endpoint nodes for quadrature
-        for _ in 2:p
-            η_old = copy(η)
-            for m in 1:M
-                k = j*M + m
-                ∫fₖ = dot(S[m, :], f.(t[I], η_old[I]))*group_scale/2
-                η[k + 1] = η[k] + Δt[k]*(f(t[k], η[k]) - f(t[k], η_old[k])) + ∫fₖ
-            end
-        end
-    end
-
-    return (t, η)
-end
-
-""" Sandwich legendre nodes within subintervals """
-function calculate_legendre_time_discretisation(t_s, t_e, number_of_legendre_nodes, J)
-    legendre_quadrature = gausslegendre(number_of_legendre_nodes)
-    group_scale = (t_e - t_s)/J
-    legendre_t = (legendre_quadrature[1] .+ 1).*group_scale/2
-    t = []
-    for j in 0:(J - 1)
-        push!(t, j*group_scale)
-        push!(t, (j*group_scale .+ legendre_t)...)
-    end
-    push!(t, t_e)
-    return (t, group_scale)
-end
-
-function SDC_FE_correction_levels(
-    ODE_system::ODESystem,
-    N, p, S
-)
-    # Initialise variables
-    @unpack_ODESystem ODE_system
-    M = p + 1
-    J = fld(N, M)   # Require N | (p + 1)
-    η = zeros(typeof(y_s), N + 1, p)
-    η[1, :] .= y_s
-    (t, group_scale) = calculate_legendre_time_discretisation(t_s, t_e, p, J)
-    Δt = t[2:end] .- t[1:end - 1]    # No longer constant
-
-    for j in 0:(J - 1)
-        # Prediction loop
-        for m in 1:M
-            k = j*M + m
-            η[k + 1, 1] = η[k, 1] + Δt[k, 1]*f(t[k], η[k, 1])
-        end
-        # Correction loop
-        I = (j*M + 2):((j + 1)*M)   # Use non-endpoint nodes for quadrature
-        for l in 2:p
-            for m in 1:M
-                k = j*M + m
-                ∫fₖ = dot(S[m, :], f.(t[I], η[I, l - 1]))*group_scale/2
-                η[k + 1, l] = η[k, l] + Δt[k]*(f(t[k], η[k, l]) - f(t[k], η[k, l - 1])) + ∫fₖ
-            end
-        end
-    end
-
-    return (t, η)
-end
-
-"""
-An integration matrix S = integration_matrix_legendre(N - 1) should be used
-"""
-function SDC_FE_single(
-    ODE_system::ODESystem,
-    N, p, S
-)
-    # Initialise variables
-    @unpack_ODESystem ODE_system
-    η = zeros(typeof(y_s), N + 1)
-    η[1] = y_s
-    (t, _) = calculate_legendre_time_discretisation(t_s, t_e, N - 1, 1)
-    gl = gausslegendre(N - 1)
-    t_legendre = (gl[1] .+ 1)/2                     # legendre nodes in [0, 1]
-    t_legendre = t_legendre.*(t_e - t_s) .+ t_s     # Legendre nodes in [a, b]
-    t = vcat(t_s, t_legendre, t_e)
-    Δt = t[2:end] .- t[1:end - 1]                   # No longer constant
+    η = initialise_η(y_s, N, number_corrections)
 
     # Prediction loop
-    for k in 1:N
-        η[k + 1] = η[k] + Δt[k]*f(t[k], η[k])
+    for m in 1:N
+        η[m + 1, 1] = η[m, 1] .+ Δt[m].*f(t[m], η[m, 1])
     end
     # Correction loop
-    I = 2:N                                         # Use non-endpoint nodes for quadrature
-    for _ in 2:p
-        η_old = copy(η)
-        for k in 1:N
-            ∫fₖ = dot(S[k, :], f.(t[I], η_old[I]))*(t_e - t_s)/2
-            η[k + 1] = η[k] + Δt[k]*(f(t[k], η[k]) - f(t[k], η_old[k])) + ∫fₖ
+    I = 2:N
+    for level in 2:(number_corrections + 1)
+        f_group = f.(t[I], η[I, level - 1])
+        for m in 1:N
+            ∫fₘ = group_scale_factor.*[sum(S[m, j]*f_group[j][i] for j in axes(S, 2)) for i in axes(y_s, 1)]
+            if typeof(y_s) <: Number
+                ∫fₘ = ∫fₘ[1]
+            end
+            η[m + 1, level] = η[m, level] .+ Δt[m].*(f(t[m], η[m, level]) .- f(t[m], η[m, level - 1])) .+ ∫fₘ
         end
     end
 
     return (t, η)
 end
+
+function SDC_FE_lobatto_single(
+    ODE_system::ODESystem,
+    number_corrections, S, N
+)
+    # Initialise variables
+    @unpack_ODESystem ODE_system
+    t_lobatto = gausslobatto(N + 1)[1]
+    (t, group_scale_factor) = sandwich_special_nodes(t_lobatto, true, t_s, t_e, 1)
+    Δt = t[2:end] .- t[1:end - 1]   # No longer constant
+    η = initialise_η(y_s, N, number_corrections)
+
+    # Prediction loop
+    for m in 1:N
+        η[m + 1, 1] = η[m, 1] .+ Δt[m].*f(t[m], η[m, 1])
+    end
+    # Correction loop
+    I = 1:(N + 1)
+    for level in 2:(number_corrections + 1)
+        f_group = f.(t[I], η[I, level - 1])
+        for m in 1:N
+            ∫fₘ = group_scale_factor.*[sum(S[m, j]*f_group[j][i] for j in axes(S, 2)) for i in axes(y_s, 1)]
+            if typeof(y_s) <: Number
+                ∫fₘ = ∫fₘ[1]
+            end
+            η[m + 1, level] = η[m, level] .+ Δt[m].*(f(t[m], η[m, level]) .- f(t[m], η[m, level - 1])) .+ ∫fₘ
+        end
+    end
+
+    return (t, η)
+end
+
+
+function SDC_FE_legendre(
+    ODE_system::ODESystem,
+    number_corrections, S, J
+)
+    # Initialise variables
+    @unpack_ODESystem ODE_system
+    M = number_corrections + 2
+    N = J*M
+    legendre_nodes = gausslegendre(number_corrections + 1)[1]
+    (t, group_scale_factor) = sandwich_special_nodes(legendre_nodes, false, t_s, t_e, J)
+    Δt = t[2:end] .- t[1:end - 1]   # No longer constant
+    η = initialise_η(y_s, N, number_corrections)
+
+    for j in 0:(J - 1)
+        # Prediction loop
+        for m in 1:M
+            k = j*M + m
+            η[k + 1, 1] = η[k, 1] .+ Δt[k].*f(t[k], η[k, 1])
+        end
+        # Correction loop
+        I = (j*M + 2):((j + 1)*M)   # Use non-endpoint nodes for quadrature
+        for level in 2:(number_corrections + 1)
+            f_group = f.(t[I], η[I, level - 1])
+            for m in 1:M
+                k = j*M + m
+                ∫fₘ = [sum(S[m, j]*f_group[j][i] for j in axes(S, 2)) for i in axes(y_s, 1)]
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                end
+                η[k + 1, level] = η[k, level] .+ Δt[k].*(f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])) .+ ∫fₘ.*group_scale_factor
+            end
+        end
+        # At the end of group evaluation, give most corrected value to all nodes
+        # for next group's evaluation.
+        # (j == J - 1) && continue
+        k_end = (j + 1)*M + 1
+        for level in 1:number_corrections
+            η[k_end, level] = η[k_end, end]
+        end
+    end
+
+    return (t, η)
+end
+
+"""
+By
+https://doi.org/10.1090/S0025-5718-09-02276-5
+this algorithm should not achieve the desired order 4*(number_corrections + 1)
+"""
+function SDC_RK4_legendre(
+    ODE_system::ODESystem,
+    number_corrections, S, J
+)
+    @unpack_ODESystem ODE_system
+    # M = 2*number_corrections + 4
+    M = 4*(number_corrections + 1) + 1
+    N = J*M
+    legendre_nodes = gausslegendre(M - 1)[1]
+    (t, group_scale_factor) = sandwich_special_nodes(legendre_nodes, false, t_s, t_e, J)
+    Δt = t[2:end] .- t[1:end - 1]
+    η = initialise_η(y_s, N, number_corrections)
+    interp_polys = interpolation_polynomials((legendre_nodes .+ 1)./2)
+
+    for j in 0:(J - 1)
+        # Predict
+        for m in 1:M
+            k = j*M + m
+            stage_1 = f(t[k], η[k, 1])
+            stage_2 = f(t[k] + 0.5Δt[k], η[k, 1] .+ 0.5Δt[k].*stage_1)
+            stage_3 = f(t[k] + 0.5Δt[k], η[k, 1] .+ 0.5Δt[k].*stage_2)
+            stage_4 = f(t[k] + Δt[k], η[k, 1] .+ Δt[k].*stage_3)
+            η[k + 1, 1] = η[k, 1] .+ (stage_1 .+ 2stage_2 .+ 2stage_3 .+ stage_4).*Δt[k]/6
+        end
+
+        # Correct
+        I_prev_quad = (j*M + 2):((j + 1)*M)     # Use non-endpoint nodes for quadrature
+        for level in 2:(number_corrections + 1)
+            f_prev_quad = f.(t[I_prev_quad], η[I_prev_quad, level - 1])
+            for m in 1:M
+                k = j*M + m
+
+                ∫fₘ_1 = group_scale_factor.*[sum(S[2*m - 1, s]*f_prev_quad[s][i] for s in axes(S, 2)) for i in axes(y_s, 1)]
+                ∫fₘ_2 = group_scale_factor.*[sum(S[2*m, s]*f_prev_quad[s][i] for s in axes(S, 2)) for i in axes(y_s, 1)]
+                ∫fₘ = ∫fₘ_1 .+ ∫fₘ_2
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                    ∫fₘ_1 = ∫fₘ_1[1]
+                end
+
+                η_prev_interp = interpolation_func(η[I_prev_quad, level - 1], interp_polys, t[I_prev_quad[1] - 1], t[I_prev_quad[end] + 1])
+                η_prev_midₘ = η_prev_interp(t[k] + 0.5Δt[k])
+
+                stage_1 = f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])
+                stage_2 = f(t[k] + 0.5Δt[k], η[k, level] .+ 0.5Δt[k].*stage_1 .+ ∫fₘ_1) .- f(t[k] + 0.5Δt[k], η_prev_midₘ)
+                stage_3 = f(t[k] + 0.5Δt[k], η[k, level] .+ 0.5Δt[k].*stage_2 .+ ∫fₘ_1) .- f(t[k] + 0.5Δt[k], η_prev_midₘ)
+                stage_4 = f(t[k + 1], η[k, level] .+ Δt[k].*stage_3 .+ ∫fₘ).- f(t[k + 1], η[k + 1, level - 1])
+                η[k + 1, level] = η[k, level] .+ (Δt[k]/6).*(stage_1 .+ stage_2.*2 .+ stage_3.*2 .+ stage_4) .+ ∫fₘ
+            end
+        end
+        # At the end of group evaluation, give most corrected value to all nodes
+        # for next group's evaluation.
+        k_end = (j + 1)*M + 1
+        for level in 1:number_corrections
+            η[k_end, level] = η[k_end, end]
+        end
+    end
+
+    return (t, η)
+end
+
+function SDC_FE_lobatto(
+    ODE_system::ODESystem,
+    number_corrections, S, J
+)
+    @unpack_ODESystem ODE_system
+    M = ceil(Int64, number_corrections/2) + 1 # normally number_corrections
+    N = J*M
+    t_gl = gausslobatto(M + 1)[1]
+    (t, group_scale_factor) = sandwich_special_nodes(t_gl, true, t_s, t_e, J)
+    Δt = t[2:end] .- t[1:end - 1]
+    η = initialise_η(y_s, N, number_corrections)
+
+    for j in 0:(J - 1)
+        # Predict
+        for m in 1:M
+            k = j*M + m
+            η[k + 1, 1] = η[k, 1] .+ f(t[k], η[k, 1]).*Δt[k]
+        end
+
+        # Correct
+        I_group = (j*M + 1):((j + 1)*M + 1)
+        for level in 2:(number_corrections + 1)
+            f_group = f.(t[I_group], η[I_group, level - 1])
+            for m in 1:M
+                k = j*M + m
+
+                ∫fₘ = group_scale_factor.*[sum(S[m, s]*f_group[s][i] for s in axes(S, 2)) for i in axes(y_s, 1)]
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                end
+
+                η[k + 1, level] = η[k, level] .+ Δt[k].*(f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])) .+ ∫fₘ
+            end
+        end
+        # At the end of group evaluation, give most corrected value to all nodes
+        # for next group's evaluation.
+        # (j == J - 1) && continue
+        k_end = (j + 1)*M + 1
+        for level in 1:number_corrections
+            η[k_end, level] = η[k_end, end]
+        end
+    end
+
+    return (t, η)
+end
+
+"""
+By
+https://doi.org/10.1090/S0025-5718-09-02276-5
+this algorithm should not work.
+"""
+function SDC_RK2_Heuns_lobatto(
+    ODE_system::ODESystem,
+    number_corrections, S, J
+)
+    @unpack_ODESystem ODE_system
+    M = number_corrections + 2
+    # M = 2*(number_corrections + 1) - 1
+    N = J*M
+    t_gl = gausslobatto(M + 1)[1]
+    (t, group_scale_factor) = sandwich_special_nodes(t_gl, true, t_s, t_e, J)
+    Δt = t[2:end] .- t[1:end - 1]
+    η = initialise_η(y_s, N, number_corrections)
+
+    for j in 0:(J - 1)
+        # Predict
+        for m in 1:M
+            k = j*M + m
+            stage_1 = f(t[k], η[k, 1])
+            stage_2 = f(t[k] + Δt[k], η[k, 1] .+ Δt[k].*stage_1)
+            η[k + 1, 1] = η[k, 1] .+ (stage_1 .+ stage_2).*Δt[k]/2
+        end
+
+        # Correct
+        I_group = (j*M + 1):((j + 1)*M + 1)
+        for level in 2:(number_corrections + 1)
+            f_group = f.(t[I_group], η[I_group, level - 1])
+            for m in 1:M
+                k = j*M + m
+
+                ∫fₘ = group_scale_factor.*[sum(S[m, s]*f_group[s][i] for s in axes(S, 2)) for i in axes(y_s, 1)]
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                end
+
+                stage_1 = f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])
+                stage_2 = f(t[k + 1], η[k, level] .+ Δt[k].*stage_1 .+ ∫fₘ).- f(t[k + 1], η[k + 1, level - 1])
+                η[k + 1, level] = η[k, level] .+ (Δt[k]/2).*(stage_1 .+ stage_2) .+ ∫fₘ
+            end
+        end
+        # At the end of group evaluation, give most corrected value to all nodes
+        # for next group's evaluation.
+        # (j == J - 1) && continue
+        k_end = (j + 1)*M + 1
+        for level in 1:number_corrections
+            η[k_end, level] = η[k_end, end]
+        end
+    end
+
+    return (t, η)
+end
+
+"""
+By
+https://doi.org/10.1090/S0025-5718-09-02276-5
+this algorithm should not work.
+"""
+function SDC_RK4_lobatto(
+    ODE_system::ODESystem,
+    number_corrections, S, J
+)
+    @unpack_ODESystem ODE_system
+    M = 4*(number_corrections + 1) - 1
+    N = J*M
+    t_gl = gausslobatto(M + 1)[1]
+    (t, group_scale_factor) = sandwich_special_nodes(t_gl, true, t_s, t_e, J)
+    Δt = t[2:end] .- t[1:end - 1]
+    η = initialise_η(y_s, N, number_corrections)
+    interp_polys = interpolation_polynomials((t_gl .+ 1)./2)
+
+    for j in 0:(J - 1)
+        # Predict
+        for m in 1:M
+            k = j*M + m
+            stage_1 = f(t[k], η[k, 1])
+            stage_2 = f(t[k] + 0.5Δt[k], η[k, 1] .+ 0.5Δt[k].*stage_1)
+            stage_3 = f(t[k] + 0.5Δt[k], η[k, 1] .+ 0.5Δt[k].*stage_2)
+            stage_4 = f(t[k] + Δt[k], η[k, 1] .+ Δt[k].*stage_3)
+            η[k + 1, 1] = η[k, 1] .+ (stage_1 .+ 2stage_2 .+ 2stage_3 .+ stage_4).*Δt[k]/6
+        end
+
+        # Correct
+        I_group = (j*M + 1):((j + 1)*M + 1)
+        for level in 2:(number_corrections + 1)
+            f_group = f.(t[I_group], η[I_group, level - 1])
+            for m in 1:M
+                k = j*M + m
+
+                ∫fₘ_1 = group_scale_factor.*[sum(S[2*m - 1, s]*f_group[s][i] for s in axes(S, 2)) for i in axes(y_s, 1)]
+                ∫fₘ_2 = group_scale_factor.*[sum(S[2*m, s]*f_group[s][i] for s in axes(S, 2)) for i in axes(y_s, 1)]
+                ∫fₘ = ∫fₘ_1 .+ ∫fₘ_2
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                    ∫fₘ_1 = ∫fₘ_1[1]
+                end
+
+                η_prev_interp = interpolation_func(η[I_group, level - 1], interp_polys, t[I_group][1], t[I_group][end])
+                η_prev_midₘ = η_prev_interp(t[k] + 0.5Δt[k])
+
+                stage_1 = f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])
+                stage_2 = f(t[k] + 0.5Δt[k], η[k, level] .+ 0.5Δt[k].*stage_1 .+ ∫fₘ_1) .- f(t[k] + 0.5Δt[k], η_prev_midₘ)
+                stage_3 = f(t[k] + 0.5Δt[k], η[k, level] .+ 0.5Δt[k].*stage_2 .+ ∫fₘ_1) .- f(t[k] + 0.5Δt[k], η_prev_midₘ)
+                stage_4 = f(t[k + 1], η[k, level] .+ Δt[k].*stage_3 .+ ∫fₘ).- f(t[k + 1], η[k + 1, level - 1])
+                η[k + 1, level] = η[k, level] .+ (Δt[k]/6).*(stage_1 .+ stage_2.*2 .+ stage_3.*2 .+ stage_4) .+ ∫fₘ
+            end
+        end
+        # At the end of group evaluation, give most corrected value to all nodes
+        # for next group's evaluation.
+        # (j == J - 1) && continue
+        k_end = (j + 1)*M + 1
+        for level in 1:number_corrections
+            η[k_end, level] = η[k_end, end]
+        end
+    end
+
+    return (t, η)
+end
+
+
+
+
+## RIDC
 
 """
 The sequential form of our RIDC algorithm is relatively simple: we've simply
 added more space in each subinterval whilst interpolating over the same number
 of nodes. The main drawback to this potential parallelisability is that only the
 less stable uniform nodes may be used.
-
-An integration matrix S = integration_matrix_equispaced(p - 1) should be used
 """
-function RIDC_FE_sequential(
+function RIDC_FE(
     ODE_system::ODESystem,
-    N, K, p, S
+    number_corrections, S, J, K
 )
     # Initialise variables
     @unpack_ODESystem ODE_system
-    t = range(t_s, t_e, N + 1) |> collect
+    M = number_corrections
+    N = J*K
+    t = range(t_s, t_e, N + 1)
     Δt = (t_e - t_s)/N
-    M = p - 1
-    J = fld(N, K)
-    η = zeros(typeof(y_s), N + 1)
-    η[1] = y_s
+    η = initialise_η(y_s, N, number_corrections)
 
-    for j in 0:(J-1)
+    for j in 0:(J - 1)
         # Prediction loop
         for m in 1:K
             k = j*K + m
-            η[k + 1] = η[k] + Δt*f(t[k], η[k])
+            η[k + 1, 1] = η[k, 1] .+ Δt.*f(t[k], η[k, 1])
         end
         # Correction loop
-        for _ in 2:p
-            η_old = copy(η)
-            for m in 1:M
+        for level in 2:(number_corrections + 1)
+            I_group = (j*K + 1):((j + 1)*K + 1)
+            f_group = f.(t[I_group], η[I_group, level - 1])
+            for m in 1:K
                 k = j*K + m
-                I = (j*K + 1):(j*K + M + 1)
-                ∫fₖ = dot(S[m, :], f.(t[I], η_old[I]))
-                η[k + 1] = η[k] + Δt*(f(t[k], η[k]) - f(t[k], η_old[k])) + Δt*∫fₖ
-            end
-            for m in (M + 1):K
-                k = j*K + m
-                I = (k + 1 - M):(k + 1)
-                ∫fₖ = dot(S[M, :], f.(t[I], η_old[I]))
-                η[k + 1] = η[k] + Δt*(f(t[k], η[k]) - f(t[k], η_old[k])) + Δt*∫fₖ
+                is_quad_startup = (m in 1:M)
+                quad_start = is_quad_startup ? 1 : m + 1 - M
+                integ_interval = is_quad_startup ? m : M
+                ∫fₘ = [sum(S[integ_interval, s]*f_group[quad_start + s - 1][i] for s in axes(S, 2)) for i in axes(y_s, 1)]
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                end
+                η[k + 1, level] = η[k, level] .+ Δt.*(f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])) .+ Δt.*∫fₘ
             end
         end
-    end
-
-    return (t, η)
-end
-
-"""
-An integration matrix S = integration_matrix_equispaced(p - 1) should be used
-"""
-function RIDC_FE_sequential_correction_levels(
-    ODE_system::ODESystem,
-    N, K, p, S
-)
-    # Initialise variables
-    @unpack_ODESystem ODE_system
-    t = range(t_s, t_e, N + 1) |> collect
-    Δt = (t_e - t_s)/N
-    M = p - 1
-    J = fld(N, K)
-    η = zeros(typeof(y_s), N + 1, p)
-    η[1, :] .= y_s
-
-    for j in 0:(J-1)
-        # Prediction loop
-        for m in 1:K
-            k = j*K + m
-            η[k + 1, 1] = η[k, 1] + Δt*f(t[k], η[k, 1])
-        end
-        # Correction loop
-        for l in 2:p
-            for m in 1:M
-                k = j*K + m
-                I = (j*K + 1):(j*K + M + 1)
-                ∫fₖ = dot(S[m, :], f.(t[I], η[I, l - 1]))
-                η[k + 1, l] = η[k, l] + Δt*(f(t[k], η[k, l]) - f(t[k], η[k, l - 1])) + Δt*∫fₖ
-            end
-            for m in (M + 1):K
-                k = j*K + m
-                I = (k + 1 - M):(k + 1)
-                ∫fₖ = dot(S[M, :], f.(t[I], η[I, l - 1]))
-                η[k + 1, l] = η[k, l] + Δt*(f(t[k], η[k, l]) - f(t[k], η[k, l - 1])) + Δt*∫fₖ
-            end
+        # At the end of group evaluation, give most corrected value to all nodes
+        # for next group's evaluation.
+        # (j == J - 1) && continue
+        k_end = (j + 1)*K + 1
+        for level in 1:number_corrections
+            η[k_end, level] = η[k_end, end]
         end
     end
 
@@ -865,44 +1276,50 @@ For forward Euler, at each correction step we are only 'aiming' for an order
 equal to the number of corrections previously done (plus 2). In lieu of this, we
 only require interpolatory quadrature involving a number of nodes again related
 to # of previous correction steps.
-
-An integration matrix S = [integration_matrix_equispaced(l) for l in 1:(p - 1)]
-should be used
 """
-function RIDC_FE_sequential_reduced_stencil(
+function RIDC_FE_reduced_stencil(
     ODE_system::ODESystem,
-    N, K, p, S::Array{Matrix{Float64}}
+    number_corrections, S_array, J, K
 )
     # Initialise variables
     @unpack_ODESystem ODE_system
-    t = range(t_s, t_e, N + 1) |> collect
+    M = number_corrections
+    N = J*K
+    t = range(t_s, t_e, N + 1)
     Δt = (t_e - t_s)/N
-    M = p - 1
-    J = fld(N, K)
-    η = zeros(typeof(y_s), N + 1)
-    η[1] = y_s
+    η = initialise_η(y_s, N, number_corrections)
 
-    for j in 0:(J-1)
+    for j in 0:(J - 1)
         # Prediction loop
-        for m in 1:M
+        for m in 1:K
             k = j*K + m
-            η[k + 1] = η[k] + Δt*f(t[k], η[k])
+            η[k + 1, 1] = η[k, 1] .+ Δt.*f(t[k], η[k, 1])
         end
         # Correction loop
-        for l in 1:M
-            η_old = copy(η)
-            for m in 1:M
+        for level in 2:(number_corrections + 1)
+            I_group = (j*K + 1):((j + 1)*K + 1)
+            f_group = f.(t[I_group], η[I_group, level - 1])
+            for m in 1:K
                 k = j*K + m
-                I = (j*K + 1):(j*K + M + 1)
-                ∫fₖ = dot(S[l][m, :], f.(t[I], η_old[I]))
-                η[k + 1] = η[k] + Δt*(f(t[k], η[k]) - f(t[k], η_old[k])) + Δt*∫fₖ
+                is_quad_startup = (m in 1:level - 1)
+                quad_start = is_quad_startup ? 1 : m + 2 - level
+                integ_interval = is_quad_startup ? m : level - 1
+                ∫fₘ = [
+                    sum(S_array[level - 1][integ_interval, s]*f_group[quad_start + s - 1][i]
+                    for s in axes(S_array[level - 1], 2)) for i in axes(y_s, 1)
+                ]
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                end
+                η[k + 1, level] = η[k, level] .+ Δt.*(f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])) .+ Δt.*∫fₘ
             end
-            for m in (M + 1):K
-                k = j*K + m
-                I = (j*K + m - M):(j*K + m)
-                ∫fₖ = dot(S[l][M, :], f.(t[I], η_old[I]))
-                η[k + 1] = η[k] + Δt*(f(t[k], η[k]) - f(t[k], η_old[k])) + Δt*∫fₖ
-            end
+        end
+        # At the end of group evaluation, give most corrected value to all nodes
+        # for next group's evaluation.
+        # (j == J - 1) && continue
+        k_end = (j + 1)*K + 1
+        for level in 1:number_corrections
+            η[k_end, level] = η[k_end, end]
         end
     end
 
@@ -910,45 +1327,205 @@ function RIDC_FE_sequential_reduced_stencil(
 end
 
 """  """
-function RIDC_RK2_trapeoid_sequential(
+function RIDC_RK2_Heuns_reduced_stencil(
     ODE_system::ODESystem,
-    N, K, p, S
+    number_corrections, S_levels, J, K
 )
     # Initialise variables
     @unpack_ODESystem ODE_system
+    M_levels = [2*level - 1 for level in 2:(number_corrections + 1)]
+    N = J*K
     t = range(t_s, t_e, N + 1)
     Δt = (t_e - t_s)/N
-    M = p - 1
-    J = fld(N, K)
-    η = zeros(typeof(y_s), N + 1)
-    η[1] = y_s
+    η = initialise_η(y_s, N, number_corrections)
 
-    for j in 0:(J-1)
+    for j in 0:(J - 1)
         # Prediction loop
         for m in 1:K
             k = j*K + m
-            K₁ = f(t[k], η[k])
-            K₂ = f(t[k + 1], η[k] .+ Δt*K₁)
-            η[k + 1] = η[k] .+ 0.5Δt.*(K₁ .+ K₂)
+            stage_1 = f(t[k], η[k, 1])
+            stage_2 = f(t[k + 1], η[k, 1] .+ Δt.*stage_1)
+            η[k + 1, 1] = η[k, 1] .+ 0.5Δt.*(stage_1 .+ stage_2)
         end
+
         # Correction loop
-        for _ in 2:fld(p, 2)
-            η_old = copy(η)
-            for m in 1:M
+        for level in 2:(number_corrections + 1)
+            I_group = (j*K + 1):((j + 1)*K + 1)
+            f_group = f.(t[I_group], η[I_group, level - 1])
+            for m in 1:K
                 k = j*K + m
-                I = (j*K + 1):(j*K + M + 1)
-                ∫fₖ = dot(S[m, :], f.(t[I], η_old[I]))
-                K₁ = f(t[k], η[k]) .- f(t[k], η_old[k])
-                K₂ = f(t[k + 1], η[k] .+ Δt.*(K₁ .+ ∫fₖ)) .- f(t[k + 1], η_old[k + 1])
-                η[k + 1] = η[k] .+ 0.5Δt.*(K₁ .+ K₂) .+ Δt.*∫fₖ
+
+                is_quad_startup = (m in 1:M_levels[level - 1])
+                quad_start = is_quad_startup ? 1 : m + 1 - M_levels[level - 1]
+                integ_interval = is_quad_startup ? m : M_levels[level - 1]
+                ∫fₘ = [
+                    sum(
+                        S_levels[level - 1][integ_interval, s]*f_group[quad_start + s - 1][i]
+                        for s in axes(S_levels[level - 1], 2)
+                    )
+                    for i in axes(y_s, 1)
+                ]
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                end
+
+                stage_1 = f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])
+                stage_2 = f(t[k + 1], η[k, level] .+ Δt.*stage_1 .+ Δt.*∫fₘ) .- f(t[k + 1], η[k + 1, level - 1])
+                η[k + 1, level] = η[k, level] .+ 0.5Δt.*(stage_1 .+ stage_2) .+ Δt.*∫fₘ
             end
-            for m in (M + 1):K
+        end
+        # At the end of group evaluation, give most corrected value to all nodes
+        # for next group's evaluation.
+        # (j == J - 1) && continue
+        k_end = (j + 1)*K + 1
+        for level in 1:number_corrections
+            η[k_end, level] = η[k_end, end]
+        end
+    end
+
+    return (t, η)
+end
+
+function RIDC_RK4(
+    ODE_system::ODESystem,
+    number_corrections, S, J, K
+)
+    @unpack_ODESystem ODE_system
+    M = 4*(number_corrections + 1) - 1
+    N = J*K
+    t = range(t_s, t_e, N + 1)
+    Δt = (t_e - t_s)/N
+    η = initialise_η(y_s, N, number_corrections)
+
+    interp_polys = interpolation_polynomials((0:M)./M)
+
+    # Prediction loop
+    for j in 0:(J - 1)
+        for m in 1:K
+            k = j*K + m
+            stage_1 = f(t[k], η[k, 1])
+            stage_2 = f(t[k] + 0.5Δt, η[k, 1] .+ 0.5Δt.*stage_1)
+            stage_3 = f(t[k] + 0.5Δt, η[k, 1] .+ 0.5Δt.*stage_2)
+            stage_4 = f(t[k] + Δt, η[k, 1] .+ Δt.*stage_3)
+            η[k + 1, 1] = η[k, 1] .+ (stage_1 .+ 2stage_2 .+ 2stage_3 .+ stage_4).*Δt/6
+        end
+
+        # Correction loop
+        for level in 2:(number_corrections + 1)
+            I_group = (j*K + 1):((j + 1)*K + 1)
+            f_group = f.(t[I_group], η[I_group, level - 1])
+            for m in 1:K
                 k = j*K + m
-                I = (j*K + m - M + 1):(j*K + m + 1)
-                ∫fₖ = dot(S[M, :], f.(t[I], η_old[I]))
-                K₁ = f(t[k], η[k]) .- f(t[k], η_old[k])
-                K₂ = f(t[k + 1], η[k] .+ Δt.*(K₁ .+ ∫fₖ)) .- f(t[k + 1], η_old[k + 1])
-                η[k + 1] = η[k] .+ 0.5Δt.*(K₁ .+ K₂) + Δt.*∫fₖ
+
+                is_quad_startup = (m in 1:M)
+                quad_start = is_quad_startup ? 1 : m + 1 - M
+                integ_interval = is_quad_startup ? m : M
+                ∫fₘ_1 = Δt.*[
+                    sum(S[2*integ_interval - 1, s]*f_group[quad_start + s - 1][i] for s in axes(S, 2))
+                    for i in axes(y_s, 1)
+                ]
+                ∫fₘ_2 = Δt.*[
+                    sum(S[2*integ_interval, s]*f_group[quad_start + s - 1][i] for s in axes(S, 2))
+                    for i in axes(y_s, 1)
+                ]
+                ∫fₘ = ∫fₘ_1 .+ ∫fₘ_2
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                    ∫fₘ_1 = ∫fₘ_1[1]
+                end
+
+                I = (j*K + quad_start):(j*K + quad_start + M)
+                η_prev_interp = interpolation_func(η[I, level - 1], interp_polys, t[I][1], t[I][end])
+                η_prev_midₘ = η_prev_interp(t[k] + 0.5Δt)
+
+                stage_1 = f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])
+                stage_2 = f(t[k] + 0.5Δt, η[k, level] .+ 0.5Δt.*stage_1 .+ ∫fₘ_1) .- f(t[k] + 0.5Δt, η_prev_midₘ)
+                stage_3 = f(t[k] + 0.5Δt, η[k, level] .+ 0.5Δt.*stage_2 .+ ∫fₘ_1) .- f(t[k] + 0.5Δt, η_prev_midₘ)
+                stage_4 = f(t[k + 1], η[k, level] .+ Δt.*stage_3 .+ ∫fₘ).- f(t[k + 1], η[k + 1, level - 1])
+                η[k + 1, level] = η[k, level] .+ (Δt/6).*(stage_1 .+ stage_2.*2 .+ stage_3.*2 .+ stage_4) .+ ∫fₘ
+            end
+        end
+        # At the end of group evaluation, give most corrected value to all nodes
+        # for next group's evaluation.
+        # (j == J - 1) && continue
+        k_end = (j + 1)*K + 1
+        for level in 1:number_corrections
+            η[k_end, level] = η[k_end, end]
+        end
+    end
+
+    return (t, η)
+end
+
+
+
+## IDC ACROSS GROUPS
+
+function predict_group(
+    η_start, t_group,
+    f, value_type,
+    M, Δt
+)
+    η_group = zeros(value_type, M + 1)
+    η_group[1] = η_start
+    for m in 1:M
+        η_group[m + 1] = η_group[m] + Δt*f(t_group[m], η_group[m])
+    end
+    return η_group
+end
+
+function correct_group(
+    η_start, t_group, η_old_group,
+    f, value_type,
+    M, S, Δt
+)
+    η_group = zeros(value_type, M + 1)
+    η_group[1] = η_start
+    for m in 1:M
+        ∫fₘ = dot(S[m, :], f.(t_group, η_old_group))
+        η_group[m + 1] = η_group[m] + Δt*(f(t_group[m], η_group[m]) - f(t_group[m], η_old_group[m])) + Δt*∫fₘ
+    end
+    return η_group
+end
+
+"""
+A slightly modified IDC method where we do the prediction and correction levels
+over the whole time domain sequentially. This allows for parallelisation 'over
+the groups'.
+
+With uniform nodes this is effectively RIDC(K = N, J = 1).
+"""
+function RSDC_FE_uniform(
+    ODE_system::ODESystem,
+    number_corrections, S, J
+)
+    # Initialise variables
+    @unpack_ODESystem ODE_system
+    M = number_corrections
+    N = J*M
+    t = range(t_s, t_e, N + 1)
+    Δt = (t_e - t_s)/N
+    η = initialise_η(y_s, N, number_corrections)
+
+    for j in 0:(J - 1)
+        # Prediction loop
+        for m in 1:M
+            k = j*M + m
+            η[k + 1, 1] = η[k, 1] .+ Δt.*f(t[k], η[k, 1])
+        end
+    end
+        # Correction loop
+    for level in 2:(number_corrections + 1)
+        for j in 0:(J - 1)
+            I = (j*M + 1):((j + 1)*M + 1)
+            f_group = f.(t[I], η[I, level - 1])
+            for m in 1:M
+                k = j*M + m
+                ∫fₘ = [sum(S[m, j]*f_group[j][i] for j in axes(S, 2)) for i in axes(y_s, 1)]
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                end
+                η[k + 1, level] = η[k, level] .+ Δt.*(f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])) .+ Δt.*∫fₘ
             end
         end
     end
@@ -956,6 +1533,224 @@ function RIDC_RK2_trapeoid_sequential(
     return (t, η)
 end
 
+function RSDC_RK4_uniform(
+    ODE_system::ODESystem,
+    number_corrections, S, J
+)
+    @unpack_ODESystem ODE_system
+    M = 4*(number_corrections + 1) - 1
+    N = J*M
+    t = range(t_s, t_e, N + 1)
+    Δt = (t_e - t_s)/N
+    η = initialise_η(y_s, N, number_corrections)
+    interp_polys = interpolation_polynomials((0:M)./M)
+
+    # Prediction loop
+    for j in 0:(J - 1)
+        for m in 1:M
+            k = j*M + m
+            stage_1 = f(t[k], η[k, 1])
+            stage_2 = f(t[k] + 0.5Δt, η[k, 1] .+ 0.5Δt.*stage_1)
+            stage_3 = f(t[k] + 0.5Δt, η[k, 1] .+ 0.5Δt.*stage_2)
+            stage_4 = f(t[k] + Δt, η[k, 1] .+ Δt.*stage_3)
+            η[k + 1, 1] = η[k, 1] .+ (stage_1 .+ 2stage_2 .+ 2stage_3 .+ stage_4).*Δt/6
+        end
+    end
+
+    # Correction loop
+    for level in 2:(number_corrections + 1)
+        for j in 0:(J - 1)
+            I_group = (j*M + 1):((j + 1)*M + 1)
+            f_group = f.(t[I_group], η[I_group, level - 1])
+            for m in 1:M
+                k = j*M + m
+
+                ∫fₘ_1 = Δt.*[sum(S[2*m - 1, s]*f_group[s][i] for s in axes(S, 2)) for i in axes(y_s, 1)]
+                ∫fₘ_2 = Δt.*[sum(S[2*m, s]*f_group[s][i] for s in axes(S, 2)) for i in axes(y_s, 1)]
+                ∫fₘ = ∫fₘ_1 .+ ∫fₘ_2
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                    ∫fₘ_1 = ∫fₘ_1[1]
+                end
+
+                η_prev_interp = interpolation_func(η[I_group, level - 1], interp_polys, t[I_group][1], t[I_group][end])
+                η_prev_midₘ = η_prev_interp(t[k] + 0.5Δt)
+
+                stage_1 = f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])
+                stage_2 = f(t[k] + 0.5Δt, η[k, level] .+ 0.5Δt.*stage_1 .+ ∫fₘ_1) .- f(t[k] + 0.5Δt, η_prev_midₘ)
+                stage_3 = f(t[k] + 0.5Δt, η[k, level] .+ 0.5Δt.*stage_2 .+ ∫fₘ_1) .- f(t[k] + 0.5Δt, η_prev_midₘ)
+                stage_4 = f(t[k + 1], η[k, level] .+ Δt.*stage_3 .+ ∫fₘ).- f(t[k + 1], η[k + 1, level - 1])
+                η[k + 1, level] = η[k, level] .+ (Δt/6).*(stage_1 .+ stage_2.*2 .+ stage_3.*2 .+ stage_4) .+ ∫fₘ
+            end
+        end
+    end
+
+    return (t, η)
+end
+
+function RSDC_FE_lobatto(
+    ODE_system::ODESystem,
+    number_corrections, S, J
+)
+    @unpack_ODESystem ODE_system
+    M = number_corrections
+    N = J*M
+    t_gl = gausslobatto(M + 1)[1]
+    (t, group_scale_factor) = sandwich_special_nodes(t_gl, true, t_s, t_e, J)
+    Δt = t[2:end] .- t[1:end - 1]
+    η = initialise_η(y_s, N, number_corrections)
+
+    # Predict over groups
+    for j in 0:(J - 1)
+        for m in 1:M
+            k = j*M + m
+            η[k + 1, 1] = η[k, 1] .+ Δt[k].*f(t[k], η[k, 1])
+        end
+    end
+
+    # Correct over groups
+    for level in 2:(number_corrections + 1)
+        for j in 0:(J - 1)
+            I = (j*M + 1):((j + 1)*M + 1)
+            f_group = f.(t[I], η[I, level - 1])
+            for m in 1:M
+                k = j*M + m
+                ∫fₘ = [sum(S[m, j]*f_group[j][i] for j in axes(S, 2)) for i in axes(y_s, 1)]
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                end
+                η[k + 1, level] = η[k, level] .+ Δt[k].*(f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])) .+ group_scale_factor.*∫fₘ
+            end
+        end
+    end
+
+    return (t, η)
+end
+
+function RSDC_FE_lobatto_reduced_stencil(
+    ODE_system::ODESystem,
+    J, number_corrections, S_levels, number_final_level_nodes
+)
+    scipy_bary_interp = pyimport("scipy.interpolate").BarycentricInterpolator
+
+    @unpack_ODESystem ODE_system
+    p = number_corrections + 1
+
+    # Each level does a different number of approximations
+    η = [zeros(typeof(y_s), level*J + 1) for level in 1:number_corrections]
+    push!(η, zeros(typeof(y_s), number_final_level_nodes*J + 1))
+    for level in 1:p
+        η[level][1] = y_s
+    end
+
+    t_groups = range(t_s, t_e, J + 1)
+    Δt_group = t_groups[2] - t_groups[1]
+    # All necessary Gauss-Lobatto nodes over [-1, 1] and scale these to nodes over [0, Δt_group]
+    t_gl_levels = [gausslobatto(1 + level)[1] for level in 1:number_corrections]
+    push!(t_gl_levels, gausslobatto(1 + number_final_level_nodes)[1])
+    for (level, t_gl) in enumerate(t_gl_levels)
+        t_gl = (t_gl .+ 1).*(Δt_group/2)
+        t_gl_levels[level] = t_gl
+    end
+
+    (number_corrections == length(S_levels)) || throw(error("there must be as many integration matrices as corrections"))
+    (number_final_level_nodes >= 1) || throw(error("must have at least one node in the final level"))
+
+    # Predict over groups
+    for j in 0:(J - 1)
+        k = j + 1
+        t_gl_current = t_gl_levels[1]
+        η[1][k + 1] = η[1][k] + Δt_group*f(t_gl_current[1] + t_groups[j + 1], η[1][k])
+    end
+
+    # Correct over groups
+    for level in 2:p
+        t_gl_current = t_gl_levels[level]
+        t_gl_prev = t_gl_levels[level - 1]
+        Δt_gl_current = t_gl_current[2:end] .- t_gl_current[1:end - 1]
+        for j in 0:(J - 1)
+            t_current = t_gl_current .+ t_groups[j + 1]
+            t_prev = t_gl_prev .+ t_groups[j + 1]
+
+            group_indices = (j*(length(t_prev) - 1) + 1):((j + 1)*(length(t_prev) - 1) + 1)
+            # Calculate interpolating polynomial over previous level's group of values
+            η_prev_interp = scipy_bary_interp(t_prev, η[level - 1][group_indices])
+            for m in 1:(length(t_current) - 1)
+                k = j*(length(t_current) - 1) + m
+
+                ∫fₘ = dot(S_levels[level - 1][m, :], f.(t_prev, η[level - 1][group_indices]))*Δt_group/2
+                η_prevₘ = η_prev_interp(t_current[m])[1]
+                η[level][k + 1] = η[level][k] + Δt_gl_current[m]*(f(t_current[m], η[level][k]) - f(t_current[m], η_prevₘ)) + ∫fₘ
+            end
+        end
+    end
+
+    return (t_groups, η)
+end
+
+"""
+By
+https://doi.org/10.1090/S0025-5718-09-02276-5
+this algorithm should not work.
+"""
+function RSDC_RK4_lobatto(
+    ODE_system::ODESystem,
+    number_corrections, S, J
+)
+    @unpack_ODESystem ODE_system
+    M = 4*(number_corrections + 1) - 1
+    N = J*M
+    t_gl = gausslobatto(M + 1)[1]
+    (t, group_scale_factor) = sandwich_special_nodes(t_gl, true, t_s, t_e, J)
+    Δt = t[2:end] .- t[1:end - 1]
+    η = initialise_η(y_s, N, number_corrections)
+    interp_polys = interpolation_polynomials((t_gl .+ 1)./2)
+
+    # Predict over groups
+    for j in 0:(J - 1)
+        for m in 1:M
+            k = j*M + m
+            stage_1 = f(t[k], η[k, 1])
+            stage_2 = f(t[k] + 0.5Δt[k], η[k, 1] .+ 0.5Δt[k].*stage_1)
+            stage_3 = f(t[k] + 0.5Δt[k], η[k, 1] .+ 0.5Δt[k].*stage_2)
+            stage_4 = f(t[k] + Δt[k], η[k, 1] .+ Δt[k].*stage_3)
+            η[k + 1, 1] = η[k, 1] .+ (stage_1 .+ 2stage_2 .+ 2stage_3 .+ stage_4).*Δt[k]/6
+        end
+    end
+
+    # Correct over groups
+    for level in 2:(number_corrections + 1)
+        for j in 0:(J - 1)
+            I_group = (j*M + 1):((j + 1)*M + 1)
+            f_group = f.(t[I_group], η[I_group, level - 1])
+            for m in 1:M
+                k = j*M + m
+
+                ∫fₘ_1 = group_scale_factor.*[sum(S[2*m - 1, s]*f_group[s][i] for s in axes(S, 2)) for i in axes(y_s, 1)]
+                ∫fₘ_2 = group_scale_factor.*[sum(S[2*m, s]*f_group[s][i] for s in axes(S, 2)) for i in axes(y_s, 1)]
+                ∫fₘ = ∫fₘ_1 .+ ∫fₘ_2
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                    ∫fₘ_1 = ∫fₘ_1[1]
+                end
+
+                η_prev_interp = interpolation_func(η[I_group, level - 1], interp_polys, t[I_group][1], t[I_group][end])
+                η_prev_midₘ = η_prev_interp(t[k] + 0.5Δt[k])
+
+                stage_1 = f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])
+                stage_2 = f(t[k] + 0.5Δt[k], η[k, level] .+ 0.5Δt[k].*stage_1 .+ ∫fₘ_1) .- f(t[k] + 0.5Δt[k], η_prev_midₘ)
+                stage_3 = f(t[k] + 0.5Δt[k], η[k, level] .+ 0.5Δt[k].*stage_2 .+ ∫fₘ_1) .- f(t[k] + 0.5Δt[k], η_prev_midₘ)
+                stage_4 = f(t[k + 1], η[k, level] .+ Δt[k].*stage_3 .+ ∫fₘ).- f(t[k + 1], η[k + 1, level - 1])
+                η[k + 1, level] = η[k, level] .+ (Δt[k]/6).*(stage_1 .+ stage_2.*2 .+ stage_3.*2 .+ stage_4) .+ ∫fₘ
+            end
+        end
+    end
+
+    return (t, η)
+end
+
+
+## IMPLICIT STUFF
 
 """ """
 function Newton_iterate(
@@ -1108,6 +1903,7 @@ function IDC_Euler_implicit_1D_correction_levels(
 
     return (t, η)
 end
+
 
 
 end
