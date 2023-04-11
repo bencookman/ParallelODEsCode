@@ -149,13 +149,11 @@ scheme.
 """
 function find_schemes_polar_stability_border(
     scheme;
-    Δt = 1.0,
     θ_res = 100, Δr = 0.01
 )
     integrator = scheme[1]
     parameters = scheme[2]
-    N =  scheme[3]
-    λ₀ = scheme[4]
+    λ₀ = scheme[3]
 
     ∂S = zeros(Complex, θ_res)
     r_max = 10
@@ -168,14 +166,15 @@ function find_schemes_polar_stability_border(
 
             ODE_system = ODESystem(
                 (t, y) -> λ*y,
-                Δt*N,
+                1.0,
                 1.0 + 0.0im
             )
             (_, η) = integrator(ODE_system, parameters...)
 
-            is_λ_stable = (abs.(η[end]) < 1.0)
-            if !is_λ_stable
-                ∂S[i] = λ_old*Δt
+
+            is_z_stable = (abs.(η[end]) < 1.0)
+            if !is_z_stable
+                ∂S[i] = λ_old
                 break
             end
             λ_old = λ
@@ -186,8 +185,7 @@ function find_schemes_polar_stability_border(
 end
 
 function plot_schemes_polar_stability_borders(
-    schemes_with_names;
-    Δt = 1.0,
+    schemes_scales_names;
     θ_res = 100, Δr = 0.01,
     x_range = (-2.5, 0.5), y_range = (-2.0, 2.0),
     x_ticks = [-2.0, -1.0, 0.0], y_ticks = [-2.0, -1.0, 0.0, 1.0, 2.0]
@@ -196,83 +194,37 @@ function plot_schemes_polar_stability_borders(
     ∂S_array = [
         find_schemes_polar_stability_border(
             scheme;
-            Δt = Δt,
             θ_res = θ_res, Δr = Δr
         )
-        for (scheme, _) in schemes_with_names
+        for (scheme, _, _) in schemes_scales_names
     ]
     # Plot borders
     border_plot = plot(
-        aspect_ratio = :equal, size = (900, 900),
+        aspect_ratio = :equal,
         xlims = x_range, ylims = y_range,
         xticks = x_ticks, yticks = y_ticks,
         xlabel = "Re(z)",
         ylabel = "Im(z)",
-        # left_margin = -25.0mm,
         thickness_scaling = 4.0,
-        legend = (0.7, 0.05),
-        guidefontsize = 10, tickfontsize = 8, legendfontsize = 8
+        legend = (1, 0),
     )
     colours = [:black, :red, :orange, :green, :blue, :purple]
     border_plot_color(i) = colours[(i - 1)%length(colours) + 1]
     for (i, ∂S) in enumerate(∂S_array)
         plot!(
-            border_plot, real(∂S), imag(∂S),
-            color = border_plot_color(i), label = schemes_with_names[i][2]
+            border_plot, real(∂S).*schemes_scales_names[i][2], imag(∂S).*schemes_scales_names[i][2],
+            color = border_plot_color(i), label = schemes_scales_names[i][3],
         )
     end
 
     # Save and display plot
-    dtstring = Dates.format(now(), "DY-m-d-TH-M-S")
-    fname = "Ben Code/output/stability/$dtstring-stability_border_polar"
-    save_formats = [".png", ".pdf"]
-    for save_format in save_formats
-        savefig(border_plot, fname*save_format)
-    end
+    # dtstring = Dates.format(now(), "DY-m-d-TH-M-S")
+    # fname = "Ben Code/output/stability/$dtstring-stability_border_polar"
+    # save_formats = [".png", ".pdf"]
+    # for save_format in save_formats
+    #     savefig(border_plot, fname*save_format)
+    # end
     display(border_plot)
-end
-
-function run_polar_stability_borders()
-    lobatto_schemes = [
-        (
-            (
-                SDC_FE_lobatto,
-                NamedTuple{(:number_corrections, :S, :J)}(
-                    (number_corrections, integration_matrix_lobatto(ceil(Int64, number_corrections/2) + 2), 1)
-                ),
-                ceil(Int64, number_corrections/2) + 1,
-                -0.5 + 0.0im
-            ),
-            "p = $(number_corrections + 1)"
-        )
-        for number_corrections in 1:3:10
-    ]
-    schemes_with_names = [
-        (
-            (
-                RK1_forward_euler,
-                (1,),
-                1,
-                -1.0 + 0.0im
-            ),
-            ""
-        ),
-        lobatto_schemes...
-    ]
-    Δt = 1.0
-    θ_res = 500     # Angular resolution
-    Δr = 0.002      # Radial step
-    x_range = (-3.5, 1.5)
-    y_range = (-3.5, 3.5)
-    x_ticks = [-3, -2, -1, 0, 1]
-    y_ticks = [-3, -2, -1, 0, 1, 2, 3]
-    plot_schemes_polar_stability_borders(
-        schemes_with_names;
-        Δt = Δt,
-        θ_res = θ_res, Δr = Δr,
-        x_range = x_range, y_range = y_range,
-        x_ticks = x_ticks, y_ticks = y_ticks
-    )
 end
 
 """
@@ -282,9 +234,11 @@ stability_mesh = whether or not the corresponding value on λ was stable or not.
 """
 function find_schemes_cartesian_stability_mesh(
     scheme;
-    Δt = 1.0,
     x_values = x_values, y_values = y_values
 )
+    integrator = scheme[1]
+    parameters = scheme[2]
+
     # Create 2D meshes
     λ_mesh = [x + im*y for y in y_values, x in x_values]
     stability_mesh = fill(true, size(λ_mesh))
@@ -295,16 +249,18 @@ function find_schemes_cartesian_stability_mesh(
         λ = λ_mesh[i, j]
         ODE_system = ODESystem(
             (t, η) -> λ*η,
-            Δt*scheme[3],
+            1.0,
             1.0 + 0.0im
         )
-        (_, η) = scheme[1](ODE_system, scheme[2]...)
+        (t, η) = integrator(ODE_system, parameters...)
+
         # Is this λ value stable or not
-        is_λ_stable = (abs(η[end]) < 1.0)
-        stability_mesh[i, j] = is_λ_stable
+        η_end = η[end, end]
+        is_z_stable = (abs(η_end) < 1.0)
+        stability_mesh[i, j] = is_z_stable
     end
 
-    return (λ_mesh, stability_mesh)
+    return stability_mesh
 end
 
 """
@@ -312,8 +268,7 @@ Store scheme parameters like
 [(scheme_1_name, (scheme_1_parameters, ...)), ...] ~ Vector{Tuple{scheme, named tuple of parameters}}
 """
 function plot_schemes_cartesian_stability_meshes(
-    schemes;
-    Δt = 1.0,
+    schemes_scales;
     x_res = 100, y_res = 100,
     x_range = (-2.5, 0.5), y_range = (-2.0, 2.0),
     x_ticks = [-2.0, -1.0, 0.0], y_ticks = [-2.0, -1.0, 0.0, 1.0, 2.0]
@@ -322,10 +277,9 @@ function plot_schemes_cartesian_stability_meshes(
     x_values = range(x_range[1], x_range[2], x_res)
     y_values = range(y_range[1], y_range[2], y_res)
     stability_meshes = []
-    for scheme in schemes
-        (_, stability_mesh) = find_schemes_cartesian_stability_mesh(
+    for (scheme, _) in schemes_scales
+        stability_mesh = find_schemes_cartesian_stability_mesh(
             scheme;
-            Δt = Δt,
             x_values = x_values, y_values = y_values
         )
         push!(stability_meshes, stability_mesh)
@@ -336,8 +290,8 @@ function plot_schemes_cartesian_stability_meshes(
         stability ? stable_value : unstable_value
     )
     stability_heatmap = heatmap(
-        aspect_ratio = :equal, colorbar = false, legend = true,
-        thickness_scaling = 3.0, xguide = "x",
+        aspect_ratio = :equal, colorbar = false,
+        thickness_scaling = 4.0,
         xlims = x_range, ylims = y_range,
         xticks = x_ticks, yticks = y_ticks,
         xlabel="Re(z)",
@@ -346,139 +300,356 @@ function plot_schemes_cartesian_stability_meshes(
     for (i, stability_mesh) in enumerate(stability_meshes)
         heatmap!(
             stability_heatmap,
-            x_values, y_values,
+            x_values*schemes_scales[i][2], y_values*schemes_scales[i][2],
             stability_to_value.(stability_mesh; stable_value = i, unstable_value = NaN),
-            fillalpha = 0.5, seriescolor = cgrad(:lighttest),
+            fillalpha = 0.35, seriescolor = cgrad(:rainbow)
         )
     end
     display(stability_heatmap)
 end
 
-function run_cartesian_stability_meshes()
-    # number_corrections = 11
-    # M = number_corrections
-    # M = 4*(number_corrections + 1) + 1
-    # S = integration_matrix_uniform(M)
-    # S = integration_matrix_legendre(M - 1)
-    # S = integration_matrix_legendre_RK4(M - 1)
-    lobatto_schemes = [
+function stability_test_RK()
+    schemes_scales_names = [
         (
-            SDC_FE_lobatto,
-            NamedTuple{(:number_corrections, :S, :J)}(
-                (number_corrections, integration_matrix_lobatto(ceil(Int64, number_corrections/2) + 2), 1)
+            (
+                RK1_forward_euler,
+                (1,),
+                -1.0 + 0.0im
             ),
-            ceil(Int64, number_corrections/2) + 1
-        )
-        for number_corrections in 1:5
-    ]
-    schemes = [
-        (
-            RK1_forward_euler,
-            NamedTuple{(:N,)}((1,)),
-            1
+            1.0,
+            "FE"
         ),
-        lobatto_schemes...
+        (
+            (
+                RK2_Heuns,
+                (1,),
+                -1.0 + 0.0im
+            ),
+            1.0,
+            "RK2"
+        ),
+        (
+            (
+                RK3_Kutta,
+                (1,),
+                -1.0 + 0.0im
+            ),
+            1.0,
+            "RK3"
+        ),
+        (
+            (
+                RK4_standard,
+                (1,),
+                -1.0 + 0.0im
+            ),
+            1.0,
+            "RK4"
+        ),
     ]
-    Δt = 1.0
-    x_res = 100
-    y_res = 100
-    x_range = (-4, 2)
-    y_range = (-4, 4)
-    # x_ticks = [0.0, 10.0, 20.0, 30.0, 40.0]
-    # y_ticks = [-20.0, -10.0, 0.0, 10.0, 20.0]
-    plot_schemes_cartesian_stability_meshes(
-        schemes;
-        Δt = Δt,
-        x_res = x_res, y_res = y_res,
-        x_range = x_range, y_range = y_range
-        # x_ticks = x_ticks, y_ticks = y_ticks
+    θ_res = 500     # Angular resolution
+    Δr = 0.002      # Radial step
+    x_range = (-3.5, 1.5)
+    y_range = (-3.5, 3.5)
+    x_ticks = [-3, -2, -1, 0, 1]
+    y_ticks = [-3, -2, -1, 0, 1, 2, 3]
+    plot_schemes_polar_stability_borders(
+        schemes_scales_names;
+        θ_res = θ_res, Δr = Δr,
+        x_range = x_range, y_range = y_range,
+        x_ticks = x_ticks, y_ticks = y_ticks
     )
 end
 
+function stability_test_IDC_corrections()
+    schemes_scales = [
+        (
+            (
+                RK1_forward_euler,
+                (1,)
+            ),
+            1
+        ),
+        (
+            (
+                IDC_FE,
+                (1, INTEGRATION_MATRIX_ARRAY_UNIFORM[2], 1)
+            ),
+            1.0
+        ),
+        (
+            (
+                IDC_FE,
+                (2, INTEGRATION_MATRIX_ARRAY_UNIFORM[3], 1)
+            ),
+            1
+        ),
+        (
+            (
+                IDC_FE,
+                (3, INTEGRATION_MATRIX_ARRAY_UNIFORM[4], 1)
+            ),
+            1
+        ),
+        (
+            (
+                IDC_FE,
+                (4, INTEGRATION_MATRIX_ARRAY_UNIFORM[5], 1)
+            ),
+            1.0
+        ),
+    ]
+    x_res = 800
+    y_res = 800
+    x_range = (-6.5, 2)
+    y_range = (-6, 6)
+    x_ticks = [-9, -6, -3, 0]
+    y_ticks = [-9, -6, -3, 0, 3, 6, 9]
+    plot_schemes_cartesian_stability_meshes(
+        schemes_scales;
+        x_res = x_res, y_res = y_res,
+        x_range = x_range, y_range = y_range,
+        x_ticks = x_ticks, y_ticks = y_ticks
+    )
+end
 
+function stability_test_4th_order()
+    schemes_scales = [
+        (
+            (
+                RK4_standard,
+                (1,)
+            ),
+            1.0
+        ),
+        (
+            (
+                IDC_FE,
+                (3, INTEGRATION_MATRIX_ARRAY_UNIFORM[4], 1)
+            ),
+            1.0
+        ),
+        (
+            (
+                IDC_RK2_Heuns,
+                (1, INTEGRATION_MATRIX_ARRAY_UNIFORM[4], 1)
+            ),
+            1.0
+        ),
+    ]
+    x_res = 500
+    y_res = 500
+    x_range = (-8, 2)
+    y_range = (-6, 6)
+    x_ticks = [-8, -4, 0]
+    y_ticks = [-6, -3, 0, 3, 6]
+    plot_schemes_cartesian_stability_meshes(
+        schemes_scales;
+        x_res = x_res, y_res = y_res,
+        x_range = x_range, y_range = y_range,
+        x_ticks = x_ticks, y_ticks = y_ticks
+    )
+end
 
-function polar_stability_borders_SDC_FE_lobatto()
-    lobatto_schemes = [
+function stability_test_8th_order()
+    schemes_scales = [
+        (
+            (
+                RK8_Cooper_Verner,
+                (1,)
+            ),
+            1.0
+        ),
+        (
+            (
+                IDC_FE,
+                (7, INTEGRATION_MATRIX_ARRAY_UNIFORM[8], 1)
+            ),
+            1.0
+        ),
+        (
+            (
+                IDC_RK2_Heuns,
+                (3, INTEGRATION_MATRIX_ARRAY_UNIFORM[8], 1)
+            ),
+            1.0
+        ),
+        (
+            (
+                IDC_RK4,
+                (1, INTEGRATION_MATRIX_ARRAY_UNIFORM_HALF_TIME_STEPS[8], 1, interpolation_polynomials((0:7)./7))
+            ),
+            1.0
+        ),
+    ]
+    x_res = 100
+    y_res = 100
+    x_range = (-25, 1)
+    y_range = (-25, 25)
+    x_ticks = [-20, -10, 0]
+    y_ticks = [-20, -10, 0, 10, 20]
+    plot_schemes_cartesian_stability_meshes(
+        schemes_scales;
+        x_res = x_res, y_res = y_res,
+        x_range = x_range, y_range = y_range,
+        x_ticks = x_ticks, y_ticks = y_ticks
+    )
+end
+
+function stability_test_groups()
+    schemes_with_names = [
+        (
+            (
+                IDC_FE,
+                (1, INTEGRATION_MATRIX_ARRAY_UNIFORM[2], 1),
+                1,
+                -0.5 + 0.0im
+            ),
+            "1 group"
+        ),
+        (
+            (
+                IDC_FE,
+                (1, INTEGRATION_MATRIX_ARRAY_UNIFORM[2], 20),
+                20,
+                -0.5 + 0.0im
+            ),
+            "20 groups"
+        ),
+    ]
+    θ_res = 500     # Angular resolution
+    Δr = 0.002      # Radial step
+    x_range = (-2.5, 0.5)
+    y_range = (-2, 2)
+    x_ticks = [-3, -2, -1, 0, 1]
+    y_ticks = [-3, -2, -1, 0, 1, 2, 3]
+    plot_schemes_polar_stability_borders(
+        schemes_with_names;
+        θ_res = θ_res, Δr = Δr,
+        x_range = x_range, y_range = y_range,
+        x_ticks = x_ticks, y_ticks = y_ticks
+    )
+end
+
+function stability_test_IDC_SDC_lobatto()
+    schemes_scales_names = [
+        (
+            (
+                IDC_FE,
+                (3, INTEGRATION_MATRIX_ARRAY_UNIFORM[4], 1),
+                -2.0 + 0.0im
+            ),
+            1.0,
+            "IDC4-FE"
+        ),
+        (
+            (
+                IDC_FE,
+                (9, INTEGRATION_MATRIX_ARRAY_UNIFORM[10], 1),
+                -5.0 + 0.0im
+            ),
+            1.0,
+            "IDC10-FE"
+        ),
         (
             (
                 SDC_FE_lobatto,
-                NamedTuple{(:number_corrections, :S, :J)}(
-                    (number_corrections, integration_matrix_lobatto(ceil(Int64, number_corrections/2) + 2), 1)
-                ),
-                ceil(Int64, number_corrections/2) + 1,
-                -0.5 + 0.0im
-            ),
-            "p = $(number_corrections + 1)"
-        )
-        for number_corrections in 1:3:10
-    ]
-    schemes_with_names = [
-        (
-            (
-                RK1_forward_euler,
-                (1,),
-                1,
+                (3, INTEGRATION_MATRIX_ARRAY_LOBATTO[4], 1),
                 -1.0 + 0.0im
             ),
-            ""
+            1.0,
+            "SDC4-FE"
         ),
-        lobatto_schemes...
+        (
+            (
+                SDC_FE_lobatto,
+                (9, INTEGRATION_MATRIX_ARRAY_LOBATTO[10], 1),
+                -1.0 + 0.0im
+            ),
+            1.0,
+            "SDC10-FE"
+        ),
     ]
-    Δt = 1.0
-    θ_res = 500     # Angular resolution
-    Δr = 0.002      # Radial step
-    x_range = (-3.5, 1.5)
-    y_range = (-3.5, 3.5)
-    x_ticks = [-3, -2, -1, 0, 1]
-    y_ticks = [-3, -2, -1, 0, 1, 2, 3]
+    # x_res = 100
+    # y_res = 100
+    θ_res = 200
+    Δr = 0.005
+    x_range = (-12, 2)
+    y_range = (-9, 9)
+    x_ticks = [-12, -8, -4, 0]
+    y_ticks = [-8, -4, 0, 4, 8]
     plot_schemes_polar_stability_borders(
-        schemes_with_names;
-        Δt = Δt,
+        schemes_scales_names;
         θ_res = θ_res, Δr = Δr,
         x_range = x_range, y_range = y_range,
         x_ticks = x_ticks, y_ticks = y_ticks
     )
+    # plot_schemes_cartesian_stability_meshes(
+    #     schemes_scales_names;
+    #     x_res = x_res, y_res = y_res,
+    #     x_range = x_range, y_range = y_range,
+    #     x_ticks = x_ticks, y_ticks = y_ticks
+    # )
 end
 
-function polar_stability_borders_SDC_FE_legendre()
-    legendre_schemes = [
+function stability_test_IDC_SDC_legendre()
+    schemes_scales_names = [
+        (
+            (
+                IDC_FE,
+                (3, INTEGRATION_MATRIX_ARRAY_UNIFORM[4], 1),
+                -2.0 + 0.0im
+            ),
+            1.0,
+            "IDC4-FE"
+        ),
+        (
+            (
+                IDC_FE,
+                (9, INTEGRATION_MATRIX_ARRAY_UNIFORM[10], 1),
+                -5.0 + 0.0im
+            ),
+            1.0,
+            "IDC10-FE"
+        ),
         (
             (
                 SDC_FE_legendre,
-                NamedTuple{(:number_corrections, :S, :J)}(
-                    (number_corrections, integration_matrix_legendre(number_corrections + 2), 1)
-                ),
-                number_corrections + 1,
-                -0.5 + 0.0im
+                (3, INTEGRATION_MATRIX_ARRAY_LEGENDRE[4], 1),
+                -2.0 + 0.0im
             ),
-            "p = $(number_corrections + 1)"
-        )
-        for number_corrections in 1:3:10
-    ]
-    schemes_with_names = [
+            1.0,
+            "SDC4-FE"
+        ),
         (
             (
-                RK1_forward_euler,
-                (1,),
-                1,
-                -1.0 + 0.0im
+                SDC_FE_lobatto,
+                (9, INTEGRATION_MATRIX_ARRAY_LEGENDRE[10], 1),
+                -5.0 + 0.0im
             ),
-            "FE"
+            1.0,
+            "SDC10-FE"
         ),
-        legendre_schemes...
     ]
-    Δt = 1.0
-    θ_res = 500     # Angular resolution
-    Δr = 0.002      # Radial step
-    x_range = (-3.5, 1.5)
-    y_range = (-3.5, 3.5)
-    x_ticks = [-3, -2, -1, 0, 1]
-    y_ticks = [-3, -2, -1, 0, 1, 2, 3]
+    # x_res = 100
+    # y_res = 100
+    θ_res = 100
+    Δr = 0.02
+    x_range = (-12, 2)
+    y_range = (-9, 9)
+    x_ticks = [-12, -8, -4, 0]
+    y_ticks = [-8, -4, 0, 4, 8]
     plot_schemes_polar_stability_borders(
-        schemes_with_names;
-        Δt = Δt,
+        schemes_scales_names;
         θ_res = θ_res, Δr = Δr,
         x_range = x_range, y_range = y_range,
         x_ticks = x_ticks, y_ticks = y_ticks
     )
+    # plot_schemes_cartesian_stability_meshes(
+    #     schemes_scales_names;
+    #     x_res = x_res, y_res = y_res,
+    #     x_range = x_range, y_range = y_range,
+    #     x_ticks = x_ticks, y_ticks = y_ticks
+    # )
 end
+

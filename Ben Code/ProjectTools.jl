@@ -16,27 +16,35 @@ using
     PyCall,
     FastGaussQuadrature,
     Parameters,
-    BarycentricInterpolation
+    BarycentricInterpolation,
+    Elliptic.Jacobi
 
 export
-    # Error calculation
+    ## Error calculation
     err_abs,
     err_rel,
     err_norm,
+    err_rel_norm,
     err_max,
-    # Test IVPs
+    ## Test IVP structure
     ODESystem,
     @unpack_ODESystem,
     ODETestSystem,
     @unpack_ODETestSystem,
+    # Test IVPs
     Butcher_p53_system,
     sqrt_system,
-    trig_system,
-    cube_system,
-    stiff_system_1,
-    SDC_RK_system,
+    trig_system_vector,
+    trig_system_scalar,
+    poly_system_1,
+    poly_system_2,
+    poly_system_3,
+    exp_system_1,
+    exp_system_2,
+    exp_system_3,
     log_system,
-    # Runge-Kutta methods
+    Jacobi_system,
+    ## Runge-Kutta methods
     RKMethod,
     @unpack_RKMethod,
     RK_time_step_explicit,
@@ -46,8 +54,9 @@ export
     RK2_Heuns,
     RK1_forward_euler,
     RK8_Cooper_Verner,
-    # Integration matrix and polynomial interpolayion
+    ## Integration matrix and polynomial interpolation
     integration_matrix,
+    integration_matrix_Float32,
     integration_matrix_uniform,
     integration_matrix_uniform_RK4,
     integration_matrix_legendre,
@@ -55,19 +64,25 @@ export
     integration_matrix_lobatto,
     integration_matrix_lobatto_RK4,
     INTEGRATION_MATRIX_ARRAY_UNIFORM,
+    INTEGRATION_MATRIX_ARRAY_UNIFORM_HALF_TIME_STEPS,
     INTEGRATION_MATRIX_ARRAY_LEGENDRE,
     INTEGRATION_MATRIX_ARRAY_LOBATTO,
+    INTEGRATION_MATRIX_ARRAY_LOBATTO_HALF_TIME_STEPS,
     fill_integration_matrix_array_uniform,
+    fill_integration_matrix_array_uniform_half_time_steps,
     fill_integration_matrix_array_legendre,
     fill_integration_matrix_array_lobatto,
-    interpolation_poly,
+    fill_integration_matrix_array_lobatto_half_time_steps,
+    interpolation_polynomials,
+    interpolation_func,
     ## IDC ALGORITHMS
     # IDC
     IDC_FE_single,
     IDC_FE,
     IDC_RK2_Heuns,
+    IDC_RK2_midpoint,
+    IDC_RK3,
     IDC_RK4,
-    IDC_RK_general,
     # SDC
     sandwich_special_nodes,
     SDC_FE_legendre_single,
@@ -75,6 +90,7 @@ export
     SDC_FE_legendre,
     SDC_RK4_legendre,
     SDC_FE_lobatto,
+    SDC_FE_lobatto_reduced_stencil,
     SDC_RK2_Heuns_lobatto,
     SDC_RK4_lobatto,
     # RIDC
@@ -87,24 +103,18 @@ export
     RSDC_RK4_uniform,
     RSDC_FE_lobatto,
     RSDC_FE_lobatto_reduced_stencil,
-    RSDC_RK4_lobatto,
-    # Implicit methods
-    Newton_iterate,
-    Newton_iterate_1D,
-    backward_Euler_1D,
-    IDC_Euler_implicit_1D,
-    IDC_Euler_implicit_1D_correction_levels
+    RSDC_RK4_lobatto
 
 
 ### STUFF FOR TESTING
 
+# Error metrics
 err_abs(exact, approx) = abs.(exact .- approx)
 err_rel(exact, approx) = err_abs(exact, approx) ./ abs.(exact)
 err_norm(exact, approx, p) = norm(err_abs(exact, approx), p)
+err_rel_norm(exact, approx, p) = err_norm(exact, approx, p)/norm(exact, p)
 err_max(exact, approx) = maximum(err_abs(exact, approx))
 
-
-# const ODEDomain = Union{Number, Vector{Number}}
 
 """
 Structure to contain an ODE system with no exact solution
@@ -121,7 +131,7 @@ Structure to contain an ODE system with no exact solution
     ODESystem{T, S}(f, t_s, t_e, y_s) where {T<:Function, S} = (t_s < t_e) ? new(f, t_s, t_e, y_s) : error("time t_s must be less than time t_e")
 end
 
-# Point(x::T, y::T) where {T<:Real} = Point{T}(x,y)
+# use form "Point(x::T, y::T) where {T<:Real} = Point{T}(x,y)"
 ODESystem(f::T, t_s, t_e, y_s::S) where {T<:Function, S} = ODESystem{T, S}(f, t_s, t_e, y_s)
 ODESystem(f, t_e, y_s) = ODESystem(f, 0.0, t_e, y_s)
 
@@ -163,29 +173,60 @@ const f_trig(t, y) = begin
     ]
 end
 const y_trig(t) = [cos(t), sin(t)]
-const trig_system = ODETestSystem(
+const trig_system_vector = ODETestSystem(
     f_trig,
     10.0,
     [1.0, 0.0],
     y_trig
 )
 
+""" https://doi.org/10.1090/S0025-5718-09-02276-5 """
+const trig_system_scalar = ODETestSystem(
+    (t, y) -> -2π*sin(2π*t) - 2*(y - cos(2π*t)),
+    20.0,
+    1.0,
+    t -> cos(2π*t)
+)
 
-const cube_system = ODETestSystem(
+""" Problems with polynomial f should be 'easy' to solve numerically """
+const poly_system_1 = ODETestSystem(
     (t, y) -> t^3,
     5.0,
     2.0,
     t -> 0.25*t^4 + 2.0,
 )
 
-const stiff_system_1 = ODETestSystem(
+const poly_system_2 = ODETestSystem(
+    (t, y) -> (t - 10.0)^3,
+    5.0,
+    2.5e3,
+    t -> 0.25*(t - 10.0)^4,
+)
+
+const poly_system_3 = ODETestSystem(
+    (t, y) -> t^10,
+    1.0,
+    0.0,
+    t -> (t^11)/11
+)
+
+const exp_system_1 = ODETestSystem(
     (t, y) -> 4y,
     3.0,
     1.0,
     t -> exp(4t)
 )
 
-const SDC_RK_system = ODETestSystem(
+""" simple example of a linear stiff system. """
+const exp_system_2 = ODETestSystem(
+    (t, y) -> -10y,
+    3.0,
+    1.0,
+    t -> exp(-10t)
+)
+
+""" https://doi.org/10.2140/camcos.2009.4.27 """
+const exp_system_3 = ODETestSystem(
     (t, y) -> y,
     1.0,
     1.0,
@@ -199,11 +240,29 @@ const log_system = ODETestSystem(
     t -> -log(1 + 0.5cos(t))
 )
 
+""" https://doi.org/10.1023/A:1022338906936 """
+const μ = 0.5
+const f_Jacobi(t, y) = begin
+    [
+        y[2]*y[3],
+        -y[1]*y[3],
+        -μ*y[1]*y[2]
+    ]
+end
+const y_Jacobi(t) = [sn(t, μ), cn(t, μ), dn(t, μ)]
+const Jacobi_system = ODETestSystem(
+    f_Jacobi,
+    1.0,
+    [0.0 + 0.0im, 1.0 + 0.0im, 1.0 + 0.0im],
+    y_Jacobi
+)
+
+
 
 ### RUNGE-KUTTA METHODS
 
 """
-Represents an arbitrary Runge-Kutta method using its Butcher Tableau. Contains:
+Represents an arbitrary Runge-Kutta method using its Butcher tableau. Contains:
     a::Array{T, 2} - coefficients of summations of kⱼ terms in calculation of kᵣ
     b::Array{T, 1} - coefficients of summations of kⱼ terms in calculation of y_{i+1}
     c::Array{T, 1} - coefficients of time step in calculation of kᵣ
@@ -217,7 +276,7 @@ match length of b.
     order_of_accuracy::Int64
     function RKMethod(a, b, c, order_of_accuracy)
         check_RK_method_size(a, b, c)
-        (length(axes(c)[1]) >= order_of_accuracy)  || error("System too small to support this order of accuracy")
+        (length(axes(c)[1]) >= order_of_accuracy)  || error("system too small to support this order of accuracy")
         return new(a, b, c, order_of_accuracy)
     end
 end
@@ -263,6 +322,7 @@ function RK_time_step_explicit(
     return Δt.*k_sum_full
 end
 """
+[REMOVED]
 Perform a single explicit correction time-step step using the given Runge-Kutta scheme:
 
 η^{l+1}_{i+1} = η^{l+1}ᵢ + Δt⋅∑bᵣ⋅kᵣ + Δt⋅Σ, where
@@ -272,32 +332,32 @@ kᵣ = f(tᵢ + cᵣ⋅Δt, η^{l+1}ᵢ + Δt⋅∑aᵣₗ⋅kₗ + cᵣ⋅Δt�
 
 η_old is the interpolant function η^{l+1}(t) evaluated at each time tᵢ + cᵣ⋅Δt.
 """
-function RK_correction_time_step_explicit(
-    f::Function,
-    Δt::Float64,
-    t_i::Float64,
-    η_i,
-    Σ,
-    η_old;
-    RK_method::RKMethod = RK4_standard
-)
-    @unpack_RKMethod RK_method
+# function RK_correction_time_step_explicit(
+#     f::Function,
+#     Δt::Float64,
+#     t_i::Float64,
+#     η_i,
+#     Σ,
+#     η_old;
+#     RK_method::RKMethod = RK4_standard
+# )
+#     @unpack_RKMethod RK_method
 
-    k = [f(t_i, η_i) - f(t_i, η_old[1])]
-    for r in axes(b)[1][2:end]
-        k_sum = zeros(typeof(η_i[1]), size(η_i))
-        for l in axes(b)[1][1]:(r - 1)
-            k_sum .+= a[r, l].*k[l]
-        end
-        k_next = f(t_i + c[r]*Δt, η_i .+ Δt.*k_sum .+ c[r].*Σ) - f(t_i + c[r]*Δt, η_old[r])
-        push!(k, k_next)
-    end
-    k_sum_full = zeros(typeof(η_i[1]), size(η_i))
-    for r in axes(b)[1]
-        k_sum_full .+= b[r].*k[r]
-    end
-    return Δt.*k_sum_full .+ Δt.*Σ
-end
+#     k = [f(t_i, η_i) - f(t_i, η_old[1])]
+#     for r in axes(b)[1][2:end]
+#         k_sum = zeros(typeof(η_i[1]), size(η_i))
+#         for l in axes(b)[1][1]:(r - 1)
+#             k_sum .+= a[r, l].*k[l]
+#         end
+#         k_next = f(t_i + c[r]*Δt, η_i .+ Δt.*k_sum .+ c[r].*Σ) - f(t_i + c[r]*Δt, η_old[r])
+#         push!(k, k_next)
+#     end
+#     k_sum_full = zeros(typeof(η_i[1]), size(η_i))
+#     for r in axes(b)[1]
+#         k_sum_full .+= b[r].*k[r]
+#     end
+#     return Δt.*k_sum_full .+ Δt.*Σ
+# end
 
 """ Canonical RK4 method. """
 const RK4_standard = RKMethod(
@@ -358,7 +418,7 @@ const RK1_forward_euler = RKMethod(
     c = [0],
     order_of_accuracy = 1
 )
-""" Eighth order Cooper-Verner method. Doesn't seem to work. """
+""" Eighth order Cooper-Verner method. """
 const RK8_Cooper_Verner = RKMethod(
     a = Float64[
         0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0;
@@ -368,10 +428,10 @@ const RK8_Cooper_Verner = RKMethod(
         (11 + sqrt(21))/84 0.0 (18 + 4sqrt(21))/63 (21 - sqrt(21))/252 0.0 0.0 0.0 0.0 0.0 0.0 0.0;
         (5 + sqrt(21))/48 0.0 (9 + sqrt(21))/36 (-231 + 14sqrt(21))/360 (63 - 7sqrt(21))/80 0.0 0.0 0.0 0.0 0.0 0.0;
         (10 - sqrt(21))/42 0.0 (-432 + 92sqrt(21))/315 (633 - 145sqrt(21))/90 (-504 + 115sqrt(21))/70 (63 - 13sqrt(21))/35 0.0 0.0 0.0 0.0 0.0;
-        1/14 0.0 0.0 0.0 0.0 (14 - 3sqrt(21))/126 (13 - 3sqrt(21))/63 1/9 0.0 0.0 0.0;
-        1/32 0.0 0.0 0.0 0.0 (91 - 21sqrt(21))/576 11/72 (-385 - 75sqrt(21))/1152 (63 + 13sqrt(21))/128 0.0 0.0;
-        1/14 0.0 0.0 0.0 0.0 1/9 (-733 - 147sqrt(21))/2205 (515 + 111sqrt(21))/504 (-51 - 11sqrt(21))/56 (132 + 28sqrt(21))/245 0.0;
-        0.0 0.0 0.0 0.0 0.0 (-42 + 7sqrt(21))/18 (-18 + 28sqrt(21))/45 (-273 - 53sqrt(21))/72 (301 + 53sqrt(21))/72 (28 - 28sqrt(21))/45 (49 - 7sqrt(21))/18
+        1/14 0.0 0.0 0.0 (14 - 3sqrt(21))/126 (13 - 3sqrt(21))/63 1/9 0.0 0.0 0.0 0.0;
+        1/32 0.0 0.0 0.0 (91 - 21sqrt(21))/576 11/72 (-385 - 75sqrt(21))/1152 (63 + 13sqrt(21))/128 0.0 0.0 0.0;
+        1/14 0.0 0.0 0.0 1/9 (-733 - 147sqrt(21))/2205 (515 + 111sqrt(21))/504 (-51 - 11sqrt(21))/56 (132 + 28sqrt(21))/245 0.0 0.0;
+        0.0 0.0 0.0 0.0 (-42 + 7sqrt(21))/18 (-18 + 28sqrt(21))/45 (-273 - 53sqrt(21))/72 (301 + 53sqrt(21))/72 (28 - 28sqrt(21))/45 (49 - 7sqrt(21))/18 0.0
     ], b = Float64[
         1/20, 0.0, 0.0,
         0.0, 0.0, 0.0,
@@ -379,7 +439,7 @@ const RK8_Cooper_Verner = RKMethod(
         49/180, 1/20
     ], c = Float64[
         0.0, 0.5, 0.5,
-        (7 + sqrt(14))/14, (7 + sqrt(14))/14, 0.5,
+        (7 + sqrt(21))/14, (7 + sqrt(21))/14, 0.5,
         (7 - sqrt(21))/14, (7 - sqrt(21))/14, 0.5,
         (7 + sqrt(21))/14, 1.0
     ],
@@ -413,8 +473,22 @@ end
 
 ### CALCULATING INTEGRATION MATRICES
 
-"""  """
-function integration_matrix(t_quadrature_nodes, t_time_steps)
+"""
+Switch between double (Float64) calculations of the integration matrix - this is
+the default - and single (Float32) calculations of the integration matrix.
+
+Used to test the impact of data precision on SDC integration effectiveness. It
+turns out its very important due to catastrophic cancellation!
+"""
+function integration_matrix(t_quadrature_nodes, t_time_steps; use_double = true)
+    S = use_double ?
+        integration_matrix_Float64(collect(Float64, t_quadrature_nodes), collect(Float64, t_time_steps)) :
+        integration_matrix_Float32(collect(Float32, t_quadrature_nodes), collect(Float32, t_time_steps))
+    return S
+end
+
+""" """
+function integration_matrix_Float64(t_quadrature_nodes::Vector{Float64}, t_time_steps::Vector{Float64})
     scipy_interpolate = pyimport("scipy.interpolate")
     # Calculate anti-derivatives of polynomial interpolants
     q_func = []
@@ -427,24 +501,46 @@ function integration_matrix(t_quadrature_nodes, t_time_steps)
         push!(q_func, qᵢ_func)
     end
     # Use antiderivatives to evaluate integration matrix
-    return [
+    S = [
         qᵢ_func(t_time_steps[i + 1]) - qᵢ_func(t_time_steps[i])
         for i in axes(t_time_steps)[1][1:end - 1], qᵢ_func in q_func
     ]
+    return S
+end
+
+function integration_matrix_Float32(t_quadrature_nodes::Vector{Float32}, t_time_steps::Vector{Float32})
+    scipy_interpolate = pyimport("scipy.interpolate")
+    # Calculate anti-derivatives of polynomial interpolants
+    q_func = Function[]
+    for i in axes(t_quadrature_nodes)[1]
+        yᵢ = zeros(Float32, size(t_quadrature_nodes))
+        yᵢ[i] = 1.0f0
+        pᵢ_coeffs = scipy_interpolate.lagrange(t_quadrature_nodes, yᵢ).c |> reverse # Lagrange interpolant to yᵢ at t
+        pᵢ_coeffs = Float32.(pᵢ_coeffs)
+        qᵢ_coeffs = pᵢ_coeffs ./ (1.0f0:length(pᵢ_coeffs))                            # Antiderivative of pᵢ
+        qᵢ_func(x::Float32) = sum(qᵢⱼ*x^j for (j, qᵢⱼ) in enumerate(qᵢ_coeffs))
+        push!(q_func, qᵢ_func)
+    end
+    # Use antiderivatives to evaluate integration matrix
+    S = [
+        qᵢ_func(Float32(t_time_steps[i + 1])) - qᵢ_func(Float32(t_time_steps[i]))
+        for i in axes(t_time_steps, 1)[1:end - 1], qᵢ_func in q_func
+    ]
+    return S
 end
 
 """ All of these are a function of the number of quadrature points, n """
 
-integration_matrix_uniform(n) = integration_matrix(0.0:(n - 1), 0.0:(n - 1))
+integration_matrix_uniform(n; use_double = true) = integration_matrix(0.0:(n - 1), 0.0:(n - 1); use_double = use_double)
 
-integration_matrix_uniform_RK4(n) = integration_matrix(0.0:(n - 1), 0.0:0.5:(n - 1))
+integration_matrix_uniform_RK4(n; use_double = true) = integration_matrix(0.0:(n - 1), 0.0:0.5:(n - 1); use_double = use_double)
 
-function integration_matrix_legendre(n)
+function integration_matrix_legendre(n; use_double = true)
     legendre_nodes = gausslegendre(n)[1]
-    return integration_matrix(legendre_nodes, vcat(-1, legendre_nodes, 1))
+    return integration_matrix(legendre_nodes, vcat(-1, legendre_nodes, 1); use_double = use_double)
 end
 
-function integration_matrix_legendre_RK4(n)
+function integration_matrix_legendre_RK4(n; use_double = true)
     legendre_nodes = gausslegendre(n)[1]
     legendre_full_nodes = vcat(-1, legendre_nodes, 1)
     legendre_half_nodes = [legendre_full_nodes[1]]
@@ -454,15 +550,15 @@ function integration_matrix_legendre_RK4(n)
         push!(legendre_half_nodes, legendre_full_nodes[i + 1])
     end
 
-    return integration_matrix(legendre_nodes, legendre_half_nodes)
+    return integration_matrix(legendre_nodes, legendre_half_nodes; use_double = use_double)
 end
 
-function integration_matrix_lobatto(n)
+function integration_matrix_lobatto(n; use_double = true)
     lobatto_nodes = gausslobatto(n)[1]
-    return integration_matrix(lobatto_nodes, lobatto_nodes)
+    return integration_matrix(lobatto_nodes, lobatto_nodes; use_double = use_double)
 end
 
-function integration_matrix_lobatto_RK4(n)
+function integration_matrix_lobatto_RK4(n; use_double = true)
     lobatto_nodes = gausslobatto(n)[1]
     lobatto_half_nodes = [lobatto_nodes[1]]
     for i in axes(lobatto_nodes, 1)[1:end - 1]
@@ -470,7 +566,7 @@ function integration_matrix_lobatto_RK4(n)
         push!(lobatto_half_nodes, half_node)
         push!(lobatto_half_nodes, lobatto_nodes[i + 1])
     end
-    return integration_matrix(lobatto_nodes, lobatto_half_nodes)
+    return integration_matrix(lobatto_nodes, lobatto_half_nodes; use_double = use_double)
 end
 
 """
@@ -485,8 +581,10 @@ single undefined element as there is no weights matrix defined for these using a
 single node.
 """
 const INTEGRATION_MATRIX_ARRAY_UNIFORM = Vector{Matrix{Float64}}(undef, 1)
+const INTEGRATION_MATRIX_ARRAY_UNIFORM_HALF_TIME_STEPS = Vector{Matrix{Float64}}(undef, 1)
 const INTEGRATION_MATRIX_ARRAY_LEGENDRE = Vector{Matrix{Float64}}(undef, 0)
 const INTEGRATION_MATRIX_ARRAY_LOBATTO = Vector{Matrix{Float64}}(undef, 1)
+const INTEGRATION_MATRIX_ARRAY_LOBATTO_HALF_TIME_STEPS = Vector{Matrix{Float64}}(undef, 1)
 
 """
 Giving only maximum size as argument is reasonable as the matrices of smaller
@@ -494,27 +592,57 @@ size are significantly easier to generate, so they are of little cost. This also
 means the above 'INTEGRATION_MATRIX_ARRAY_...'s are automatically ordered.
 """
 
-function fill_integration_matrix_array_uniform(max_size)
+function fill_integration_matrix_array_uniform(max_size; use_double = true)
     current_size = size(INTEGRATION_MATRIX_ARRAY_UNIFORM, 1)
     (current_size >= max_size) && throw(error("now new matrices needed"))
     number_quadrature_nodes_array = (current_size + 1):max_size
-    push!(INTEGRATION_MATRIX_ARRAY_UNIFORM, [integration_matrix_uniform(number_q_nodes) for number_q_nodes in number_quadrature_nodes_array]...)
+    push!(
+        INTEGRATION_MATRIX_ARRAY_UNIFORM,
+        [integration_matrix_uniform(number_q_nodes; use_double = use_double) for number_q_nodes in number_quadrature_nodes_array]...)
     nothing
 end
 
-function fill_integration_matrix_array_legendre(max_size)
+"""
+some IDC iterations require integration matrices generated over uniform nodes
+witih half steps in between for stages (think midpoint method, RK4)
+"""
+function fill_integration_matrix_array_uniform_half_time_steps(max_size; use_double = true)
+    current_size = size(INTEGRATION_MATRIX_ARRAY_UNIFORM_HALF_TIME_STEPS, 1)
+    (current_size >= max_size) && throw(error("now new matrices needed"))
+    number_quadrature_nodes_array = (current_size + 1):max_size
+    push!(
+        INTEGRATION_MATRIX_ARRAY_UNIFORM_HALF_TIME_STEPS,
+        [integration_matrix(1:number_q_nodes, 1:0.5:number_q_nodes; use_double = use_double) for number_q_nodes in number_quadrature_nodes_array]...)
+    nothing
+end
+
+function fill_integration_matrix_array_legendre(max_size; use_double = true)
     current_size = size(INTEGRATION_MATRIX_ARRAY_LEGENDRE, 1)
     (current_size >= max_size) && throw(error("now new matrices needed"))
     number_quadrature_nodes_array = (current_size + 1):max_size
-    push!(INTEGRATION_MATRIX_ARRAY_LEGENDRE, [integration_matrix_legendre(number_q_nodes) for number_q_nodes in number_quadrature_nodes_array]...)
+    push!(
+        INTEGRATION_MATRIX_ARRAY_LEGENDRE,
+        [integration_matrix_legendre(number_q_nodes; use_double = use_double) for number_q_nodes in number_quadrature_nodes_array]...)
     nothing
 end
 
-function fill_integration_matrix_array_lobatto(max_size)
+function fill_integration_matrix_array_lobatto(max_size; use_double = true)
     current_size = size(INTEGRATION_MATRIX_ARRAY_LOBATTO, 1)
     (current_size >= max_size) && throw(error("now new matrices needed"))
     number_quadrature_nodes_array = (current_size + 1):max_size
-    push!(INTEGRATION_MATRIX_ARRAY_LOBATTO, [integration_matrix_lobatto(number_q_nodes) for number_q_nodes in number_quadrature_nodes_array]...)
+    push!(
+        INTEGRATION_MATRIX_ARRAY_LOBATTO,
+        [integration_matrix_lobatto(number_q_nodes; use_double = use_double) for number_q_nodes in number_quadrature_nodes_array]...)
+    nothing
+end
+
+function fill_integration_matrix_array_lobatto_half_time_steps(max_size; use_double = true)
+    current_size = size(INTEGRATION_MATRIX_ARRAY_LOBATTO_HALF_TIME_STEPS, 1)
+    (current_size >= max_size) && throw(error("now new matrices needed"))
+    number_quadrature_nodes_array = (current_size + 1):max_size
+    push!(
+        INTEGRATION_MATRIX_ARRAY_LOBATTO_HALF_TIME_STEPS,
+        [integration_matrix_lobatto_RK4(number_q_nodes; use_double = use_double) for number_q_nodes in number_quadrature_nodes_array]...)
     nothing
 end
 
@@ -596,8 +724,6 @@ Algorithm from https://doi.org/10.1137/09075740X
 Note passing integration matrix S as argument is much more efficient for testing
 as the same matrix may otherwise be calculated multiple times for different
 function calls.
-
-An integration matrix S = integration_matrix_equispaced(p - 1) should be used
 """
 function IDC_FE(
     ODE_system::ODESystem,
@@ -689,9 +815,131 @@ function IDC_RK2_Heuns(
     return (t, η)
 end
 
-function IDC_RK4(
+function IDC_RK2_midpoint(
     ODE_system::ODESystem,
     number_corrections, S, J
+)
+    # Initialise variables
+    @unpack_ODESystem ODE_system
+    M = 2*(number_corrections + 1) - 1
+    N = J*M
+    t = range(t_s, t_e, N + 1)
+    Δt = (t_e - t_s)/N
+    η = initialise_η(y_s, N, number_corrections)
+    interp_polys = interpolation_polynomials((0:M)./M)  # Get ̂π_j
+
+    for j in 0:(J - 1)
+        # RK2-midpoint prediction loop
+        for m in 1:M
+            k = j*M + m
+            stage_1 = f(t[k], η[k, 1])
+            stage_2 = f(t[k] + 0.5Δt, η[k, 1] .+ 0.5Δt.*stage_1)
+            η[k + 1, 1] = η[k, 1] .+ stage_2.*Δt
+        end
+
+        # RK2-midpoint corrections loop
+        I_group = (j*M + 1):((j + 1)*M + 1)
+        for level in 2:(number_corrections + 1)
+            f_group = f.(t[I_group], η[I_group, level - 1])
+            for m in 1:M
+                k = j*M + m
+
+                # Calculate approximate intetgrals over subintervals [t_m, t_m + 0.5Δt] etc.
+                ∫fₘ_1 = Δt.*[sum(S[2*m - 1, s]*f_group[s][i] for s in axes(S, 2)) for i in axes(y_s, 1)]
+                ∫fₘ_2 = Δt.*[sum(S[2*m, s]*f_group[s][i] for s in axes(S, 2)) for i in axes(y_s, 1)]
+                ∫fₘ = ∫fₘ_1 .+ ∫fₘ_2
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                    ∫fₘ_1 = ∫fₘ_1[1]
+                end
+
+                # Calulate η(t_m + 0.5Δt)
+                η_prev_interp = interpolation_func(η[I_group, level - 1], interp_polys, t[I_group][1], t[I_group][end])
+                η_prev_midₘ = η_prev_interp(t[k] + 0.5Δt)
+
+                # Perform time step
+                stage_1 = f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])
+                stage_2 = f(t[k] + 0.5Δt, η[k, level] .+ 0.5Δt.*stage_1 .+ ∫fₘ_1) .- f(t[k] + 0.5Δt, η_prev_midₘ)
+                η[k + 1, level] = η[k, level] .+ Δt.*stage_2 .+ ∫fₘ
+            end
+        end
+        # At the end of group evaluation, give most corrected value to all nodes
+        # for next group's evaluation.
+        # (j == J - 1) && continue
+        k_end = (j + 1)*M + 1
+        for level in 1:number_corrections
+            η[k_end, level] = η[k_end, end]
+        end
+    end
+
+    return (t, η)
+end
+
+function IDC_RK3(
+    ODE_system::ODESystem,
+    number_corrections, S, J
+)
+    # Initialise variables
+    @unpack_ODESystem ODE_system
+    M = 3*(number_corrections + 1) - 1
+    N = J*M
+    t = range(t_s, t_e, N + 1)
+    Δt = (t_e - t_s)/N
+    η = initialise_η(y_s, N, number_corrections)
+    interp_polys = interpolation_polynomials((0:M)./M)  # Get ̂π_j
+
+    # RK3 prediction loop
+    for j in 0:(J - 1)
+        for m in 1:M
+            k = j*M + m
+            stage_1 = f(t[k], η[k, 1])
+            stage_2 = f(t[k] + 0.5Δt, η[k, 1] .+ 0.5Δt.*stage_1)
+            stage_3 = f(t[k] + Δt, η[k, 1] .+ Δt.*(2.0.*stage_2 .- stage_1))
+            η[k + 1, 1] = η[k, 1] .+ (stage_1 .+ 4.0.*stage_2 .+ stage_3).*Δt/6
+        end
+
+        # RK3 corrections loop
+        I_group = (j*M + 1):((j + 1)*M + 1)
+        for level in 2:(number_corrections + 1)
+            f_group = f.(t[I_group], η[I_group, level - 1])
+            for m in 1:M
+                k = j*M + m
+
+                # Calculate approximate intetgrals over subintervals [t_m, t_m + 0.5Δt] etc.
+                ∫fₘ_1 = Δt.*[sum(S[2*m - 1, s]*f_group[s][i] for s in axes(S, 2)) for i in axes(y_s, 1)]
+                ∫fₘ_2 = Δt.*[sum(S[2*m, s]*f_group[s][i] for s in axes(S, 2)) for i in axes(y_s, 1)]
+                ∫fₘ = ∫fₘ_1 .+ ∫fₘ_2
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                    ∫fₘ_1 = ∫fₘ_1[1]
+                end
+
+                # Calulate η(t_m + 0.5Δt)
+                η_prev_interp = interpolation_func(η[I_group, level - 1], interp_polys, t[I_group][1], t[I_group][end])
+                η_prev_midₘ = η_prev_interp(t[k] + 0.5Δt)
+
+                # Perform time step
+                stage_1 = f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])
+                stage_2 = f(t[k] + 0.5Δt, η[k, level] .+ 0.5Δt.*stage_1 .+ ∫fₘ_1) .- f(t[k] + 0.5Δt, η_prev_midₘ)
+                stage_3 = f(t[k + 1], η[k, level] .+ Δt.*(2.0.*stage_2 .- stage_1) .+ ∫fₘ).- f(t[k + 1], η[k + 1, level - 1])
+                η[k + 1, level] = η[k, level] .+ (Δt/6).*(stage_1 .+ 4.0.*stage_2 .+ stage_3) .+ ∫fₘ
+            end
+        end
+        # At the end of group evaluation, give most corrected value to all nodes
+        # for next group's evaluation.
+        # (j == J - 1) && continue
+        k_end = (j + 1)*M + 1
+        for level in 1:number_corrections
+            η[k_end, level] = η[k_end, end]
+        end
+    end
+
+    return (t, η)
+end
+
+function IDC_RK4(
+    ODE_system::ODESystem,
+    number_corrections, S, J, lagrange_basis_array
 )
     @unpack_ODESystem ODE_system
     M = 4*(number_corrections + 1) - 1
@@ -699,7 +947,6 @@ function IDC_RK4(
     t = range(t_s, t_e, N + 1)
     Δt = (t_e - t_s)/N
     η = initialise_η(y_s, N, number_corrections)
-    interp_polys = interpolation_polynomials((0:M)./M)
 
     # Prediction loop
     for j in 0:(J - 1)
@@ -727,7 +974,7 @@ function IDC_RK4(
                     ∫fₘ_1 = ∫fₘ_1[1]
                 end
 
-                η_prev_interp = interpolation_func(η[I_group, level - 1], interp_polys, t[I_group][1], t[I_group][end])
+                η_prev_interp = interpolation_func(η[I_group, level - 1], lagrange_basis_array, t[I_group][1], t[I_group][end])
                 η_prev_midₘ = η_prev_interp(t[k] + 0.5Δt)
 
                 stage_1 = f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])
@@ -749,55 +996,58 @@ function IDC_RK4(
     return (t, η)
 end
 
-function IDC_RK_general(
-    ODE_system::ODESystem,
-    N, p, S;
-    RK_method::RKMethod = RK2_midpoint
-)
-    # Initialise variables
-    @unpack_ODESystem ODE_system
-    t = range(t_s, t_e, N + 1) |> collect
-    Δt = (t_e - t_s)/N
-    M = p - 1
-    J = fld(N, M)
-    η = zeros(typeof(y_s), N + 1)
-    η[1] = y_s
 
-    for j in 0:(J - 1)
-        # Prediction loop
-        for m in 1:M
-            k = j*M + m
-            η[k + 1] = RK_time_step_explicit(f, Δt, t[k], η[k]; RK_method = RK_method)
-        end
-        # Correction loop
-        I = (j*M + 1):((j + 1)*M + 1)   # Quadrature nodes
-        for _ in 2:fld(p, 2)
-            η_old = copy(η)
-            η_old_group_poly = get_IDC_RK_group_poly(η_old, t[j*M + 1], t[(j + 1)*M], (j*M + 1):((j + 1)*M))
-            for m in 1:M
-                k = j*M + m
-                ∫fₖ = dot(S[m, :], f.(t[I], η_old[I]))
-                η_old_interpolants = [η_old_group_poly(t[k] + Δt*cᵣ) for cᵣ in RK_method.c]
-                η[k + 1] = RK_correction_time_step_explicit(
-                    f, Δt, t[k], η[k], ∫fₖ, η_old_interpolants;
-                    RK_method = RK_method
-                )
-            end
-        end
-    end
+""" [REMOVED] not functional. """
+# function IDC_RK_general(
+#     ODE_system::ODESystem,
+#     N, p, S;
+#     RK_method::RKMethod = RK2_midpoint
+# )
+#     # Initialise variables
+#     @unpack_ODESystem ODE_system
+#     t = range(t_s, t_e, N + 1) |> collect
+#     Δt = (t_e - t_s)/N
+#     M = p - 1
+#     J = fld(N, M)
+#     η = zeros(typeof(y_s), N + 1)
+#     η[1] = y_s
 
-    return (t, η)
-end
+#     for j in 0:(J - 1)
+#         # Prediction loop
+#         for m in 1:M
+#             k = j*M + m
+#             η[k + 1] = RK_time_step_explicit(f, Δt, t[k], η[k]; RK_method = RK_method)
+#         end
+#         # Correction loop
+#         I = (j*M + 1):((j + 1)*M + 1)   # Quadrature nodes
+#         for _ in 2:fld(p, 2)
+#             η_old = copy(η)
+#             η_old_group_poly = get_IDC_RK_group_poly(η_old, t[j*M + 1], t[(j + 1)*M], (j*M + 1):((j + 1)*M))
+#             for m in 1:M
+#                 k = j*M + m
+#                 ∫fₖ = dot(S[m, :], f.(t[I], η_old[I]))
+#                 η_old_interpolants = [η_old_group_poly(t[k] + Δt*cᵣ) for cᵣ in RK_method.c]
+#                 η[k + 1] = RK_correction_time_step_explicit(
+#                     f, Δt, t[k], η[k], ∫fₖ, η_old_interpolants;
+#                     RK_method = RK_method
+#                 )
+#             end
+#         end
+#     end
+
+#     return (t, η)
+# end
 
 """
+[NOT NEEDED]
 Generates the polynomial which interpolates η_old at all points in a given group
 and returns as a function of time.
 """
-function get_IDC_RK_group_poly(η_old, t_group_s, t_group_e, group_indices)
-    equispaced_poly = Equispaced{length(group_indices) - 1}()
-    interpolating_poly = interpolate(equispaced_poly, η_old[group_indices])
-    return (t_in -> interpolating_poly(2(t_in - t_group_s)/(t_group_e - t_group_s) - 1))
-end
+# function get_IDC_RK_group_poly(η_old, t_group_s, t_group_e, group_indices)
+#     equispaced_poly = Equispaced{length(group_indices) - 1}()
+#     interpolating_poly = interpolate(equispaced_poly, η_old[group_indices])
+#     return (t_in -> interpolating_poly(2(t_in - t_group_s)/(t_group_e - t_group_s) - 1))
+# end
 
 """
 Integral deferred correction with a single subinterval (uses static 
@@ -990,7 +1240,6 @@ function SDC_RK4_legendre(
     number_corrections, S, J
 )
     @unpack_ODESystem ODE_system
-    # M = 2*number_corrections + 4
     M = 4*(number_corrections + 1) + 1
     N = J*M
     legendre_nodes = gausslegendre(M - 1)[1]
@@ -1051,7 +1300,53 @@ function SDC_FE_lobatto(
     number_corrections, S, J
 )
     @unpack_ODESystem ODE_system
-    M = ceil(Int64, number_corrections/2) + 1 # normally number_corrections
+    M = number_corrections
+    N = J*M
+    t_gl = gausslobatto(M + 1)[1]
+    (t, group_scale_factor) = sandwich_special_nodes(t_gl, true, t_s, t_e, J)
+    Δt = t[2:end] .- t[1:end - 1]
+    η = initialise_η(y_s, N, number_corrections)
+
+    for j in 0:(J - 1)
+        # Predict
+        for m in 1:M
+            k = j*M + m
+            η[k + 1, 1] = η[k, 1] .+ f(t[k], η[k, 1]).*Δt[k]
+        end
+
+        # Correct
+        I_group = (j*M + 1):((j + 1)*M + 1)
+        for level in 2:(number_corrections + 1)
+            f_group = f.(t[I_group], η[I_group, level - 1])
+            for m in 1:M
+                k = j*M + m
+
+                ∫fₘ = group_scale_factor.*[sum(S[m, s]*f_group[s][i] for s in axes(S, 2)) for i in axes(y_s, 1)]
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                end
+
+                η[k + 1, level] = η[k, level] .+ Δt[k].*(f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])) .+ ∫fₘ
+            end
+        end
+        # At the end of group evaluation, give most corrected value to all nodes
+        # for next group's evaluation.
+        # (j == J - 1) && continue
+        k_end = (j + 1)*M + 1
+        for level in 1:number_corrections
+            η[k_end, level] = η[k_end, end]
+        end
+    end
+
+    return (t, η)
+end
+
+function SDC_FE_lobatto_reduced_stencil(
+    ODE_system::ODESystem,
+    number_corrections, S, J
+)
+    @unpack_ODESystem ODE_system
+    M = ceil(Int64, (number_corrections + 1)/2)
     N = J*M
     t_gl = gausslobatto(M + 1)[1]
     (t, group_scale_factor) = sandwich_special_nodes(t_gl, true, t_s, t_e, J)
@@ -1102,8 +1397,7 @@ function SDC_RK2_Heuns_lobatto(
     number_corrections, S, J
 )
     @unpack_ODESystem ODE_system
-    M = number_corrections + 2
-    # M = 2*(number_corrections + 1) - 1
+    M = 2*(number_corrections + 1) - 1
     N = J*M
     t_gl = gausslobatto(M + 1)[1]
     (t, group_scale_factor) = sandwich_special_nodes(t_gl, true, t_s, t_e, J)
@@ -1213,7 +1507,6 @@ function SDC_RK4_lobatto(
 
     return (t, η)
 end
-
 
 
 
@@ -1742,161 +2035,6 @@ function RSDC_RK4_lobatto(
                 stage_3 = f(t[k] + 0.5Δt[k], η[k, level] .+ 0.5Δt[k].*stage_2 .+ ∫fₘ_1) .- f(t[k] + 0.5Δt[k], η_prev_midₘ)
                 stage_4 = f(t[k + 1], η[k, level] .+ Δt[k].*stage_3 .+ ∫fₘ).- f(t[k + 1], η[k + 1, level - 1])
                 η[k + 1, level] = η[k, level] .+ (Δt[k]/6).*(stage_1 .+ stage_2.*2 .+ stage_3.*2 .+ stage_4) .+ ∫fₘ
-            end
-        end
-    end
-
-    return (t, η)
-end
-
-
-## IMPLICIT STUFF
-
-""" """
-function Newton_iterate(
-    vector_field,
-    inverse_Jacobian_matrix,
-    start_value;
-    max_iterations = 10,
-    tolerance = 1e-7
-)
-    current_value = copy(start_value)
-    for _ in 1:max_iterations
-        change_in_value = inverse_Jacobian_matrix(current_value)*vector_field(current_value)
-        (sum(abs.(change_in_value)) < tolerance) && break
-        current_value .-= change_in_value
-    end
-    return current_value
-end
-
-""" """
-function Newton_iterate_1D(
-    f,
-    df,
-    start_value::T;
-    max_iterations = 10,
-    epsilon = 1e-10,
-    tolerance = 1e-7
-) where {T <: Number}
-    current_value = start_value
-    for _ in 1:max_iterations
-        df_value = df(current_value)
-        (abs(df_value) < epsilon) && break
-        change_in_value = f(current_value)/df(current_value)
-        (abs(change_in_value) < tolerance) && break
-        current_value -= change_in_value
-    end
-    return current_value
-end
-
-function backward_Euler_1D(
-    ODE_system::ODESystem,
-    ∂f∂y,
-    N
-)
-    # Initialise variables
-    @unpack_ODESystem ODE_system
-    t = range(t_s, t_e, N + 1) |> collect
-    Δt = (t_e - t_s)/N
-    η = zeros(typeof(y_s), N + 1)
-    η[1] = y_s
-
-    for k in 1:N
-        η[k + 1] = Newton_iterate_1D(
-            (η_next -> η[k] + Δt*f(t[k + 1], η_next) - η_next),
-            (η_next -> Δt*∂f∂y(t[k + 1], η_next) - 1),
-            η[k];
-            max_iterations = 10
-        )
-    end
-
-    return (t, η)
-end
-
-
-""" """
-function IDC_Euler_implicit_1D(
-    ODE_system::ODESystem,
-    ∂f∂y,
-    N, p, S
-)
-    # Initialise variables
-    @unpack_ODESystem ODE_system
-    t = range(t_s, t_e, N + 1) |> collect
-    Δt = (t_e - t_s)/N
-    M = p - 1
-    J = fld(N, M)
-    η = zeros(typeof(y_s), N + 1)
-    η[1] = y_s
-
-    for j in 0:(J - 1)
-        # Prediction loop
-        for m in 1:M
-            k = j*M + m
-            # Approximates η[k + 1] = η[k] + Δt*f(t[k + 1], η[k + 1])
-            η[k + 1] = Newton_iterate_1D(
-                (η_next -> η[k] + Δt*f(t[k + 1], η_next) - η_next),
-                (η_next -> Δt*∂f∂y(t[k + 1], η_next) - 1),
-                η[k]
-            )
-        end
-        # Correction loop
-        I = (j*M + 1):((j + 1)*M + 1)
-        for _ in 2:p
-            η_old = copy(η)
-            for m in 1:M
-                k = j*M + m
-                ∫fₖ = dot(S[m, :], f.(t[I], η_old[I]))
-                # Approximates η[k + 1] = η[k] + Δt*(f(t[k + 1], η[k + 1]) - f(t[k + 1], η_old[k + 1])) + Δt*∫fₖ
-                η[k + 1] = Newton_iterate_1D(
-                    (η_next -> η[k] + Δt*(f(t[k + 1], η_next) - f(t[k + 1], η_old[k + 1])) + Δt*∫fₖ - η_next),
-                    (η_next -> Δt*∂f∂y(t[k + 1], η_next) - 1),
-                    η[k]
-                )
-            end
-        end
-    end
-
-    return (t, η)
-end
-""" """
-function IDC_Euler_implicit_1D_correction_levels(
-    ODE_system::ODESystem,
-    ∂f∂y,
-    N, p, S
-)
-    # Initialise variables
-    @unpack_ODESystem ODE_system
-    t = range(t_s, t_e, N + 1) |> collect
-    Δt = (t_e - t_s)/N
-    M = p - 1
-    J = fld(N, M)
-    η = zeros(typeof(y_s), N + 1, p)
-    η[1, :] .= y_s
-
-    for j in 0:(J - 1)
-        # Prediction loop
-        for m in 1:M
-            k = j*M + m
-            # Approximates η[k + 1] = η[k] + Δt*f(t[k + 1], η[k + 1])
-            η[k + 1, 1] = Newton_iterate_1D(
-                (η_next -> η[k, 1] + Δt*f(t[k + 1], η_next) - η_next),
-                (η_next -> Δt*∂f∂y(t[k + 1], η_next) - 1),
-                η[k, 1]
-            )
-        end
-        # Correction loop
-        I = (j*M + 1):((j + 1)*M + 1)
-        for l in 2:p
-            for m in 1:M
-                k = j*M + m
-                ∫fₖ = dot(S[m, :], f.(t[I], η[I, l - 1]))
-                # Approximates η[k + 1] = η[k] + Δt*(f(t[k + 1], η[k + 1]) - f(t[k + 1], η_old[k + 1])) + Δt*∫fₖ
-                η[k + 1, l] = Newton_iterate_1D(
-                    (η_next -> η[k, l] + Δt*(f(t[k + 1], η_next) - f(t[k + 1], η[k + 1, l - 1])) + Δt*∫fₖ - η_next),
-                    (η_next -> Δt*∂f∂y(t[k + 1], η_next) - 1),
-                    η[k, l - 1]
-                )
             end
         end
     end
