@@ -977,11 +977,10 @@ function test_SDC_reduced_stencil()
     number_corrections_array = [1, 3, 6, 9]
     p_array = 1 .+ number_corrections_array
     J_array = 1:20
-    # one_over_N_array = [[] for _ in number_corrections_array]
     
     @unpack_ODETestSystem sqrt_system
     @unpack_ODESystem ODE_system
-    one_over_N_array = (t_e - t_s)./J_array
+    ΔT_array = (t_e - t_s)./J_array
     y_exact_end = y(t_e)
 
     err_array = []
@@ -990,8 +989,7 @@ function test_SDC_reduced_stencil()
         S = INTEGRATION_MATRIX_ARRAY_LOBATTO[M + 1]
         push!(err_array, [])
         for J in J_array
-            (_, y_out) = SDC_FE_lobatto_reduced_stencil(ODE_system, number_corrections, S, J)
-            # push!(one_over_N_array[i], 1/(size(y_out[:, end], 1) - 1))
+            (_, y_out) = SDC_FE_lobatto_reduced_quadrature(ODE_system, number_corrections, S, J)
             y_out_end = real(y_out[end, end])
             err = err_rel_norm(y_exact_end, y_out_end, 2)
             push!(err_array[i], (err == 0.0) ? 1.0 : err)
@@ -1007,18 +1005,78 @@ function test_SDC_reduced_stencil()
     log_const = [3e-1, 1e-3, 1e-7, 1e-12]
     trunc_index = [size(J_array, 1), size(J_array, 1), size(J_array, 1), 12]
     for (i, order) in enumerate(p_array)
-        one_over_N_array_trunc = one_over_N_array[1:trunc_index[i]]
-        err_order_array = log_const[i].*one_over_N_array_trunc.^order
+        ΔT_array_trunc = ΔT_array[1:trunc_index[i]]
+        err_order_array = log_const[i].*ΔT_array_trunc.^order
         plot!(
-            plot_err, one_over_N_array_trunc, err_order_array,
-            linestyle = :dash, label = L"\sim N^{-%$order}", color = data_colours[i]
+            plot_err, ΔT_array_trunc, err_order_array,
+            linestyle = :dash, label = L"\sim (\Delta T~)^{%$order}", color = data_colours[i]
         )
     end
     data_labels = [string("SDC", p, "-FE") for p in p_array]
     for i in axes(err_array, 1)
         plot!(
             plot_err,
-            one_over_N_array, err_array[i],
+            ΔT_array, err_array[i],
+            markershape = :circle, label = data_labels[i], color = data_colours[i]
+        )
+    end
+    xtick_values = [10^0.5, 1, 10^-0.5]
+    # xtick_strings = ["1/12", "1/36", "1/96", "1/120"]
+    xticks!(plot_err, xtick_values)
+
+    display(plot_err)
+
+    # for i in axes(err_array[1], 1)[2:end]
+    #     order = (log(err_array[1][i]) - log(err_array[1][i - 1]))/(log(one_over_N_array[i]) - log(one_over_N_array[i - 1]))
+    #     println(order)
+    # end
+end
+
+function test_SDC_RK2_reduced_stencil()
+    number_corrections_array = [1, 2, 3, 4]
+    p_array = 2 .* (1 .+ number_corrections_array)
+    orders_to_plot = [2, 3, 4, 5]
+    J_array = 1:20
+    
+    @unpack_ODETestSystem exp_system_3
+    @unpack_ODESystem ODE_system
+    ΔT_array = (t_e - t_s)./J_array
+    y_exact_end = y(t_e)
+
+    err_array = []
+    for (i, number_corrections) in enumerate(number_corrections_array)
+        M = number_corrections + 1
+        S = INTEGRATION_MATRIX_ARRAY_LOBATTO[M + 1]
+        push!(err_array, [])
+        for J in J_array
+            (_, y_out) = SDC_RK2_Heuns_lobatto_reduced_quadrature_convergence_enhanced(ODE_system, number_corrections, S, J, 0)
+            y_out_end = real(y_out[end, end])
+            err = err_rel_norm(y_exact_end, y_out_end, 2)
+            push!(err_array[i], (err == 0.0) ? 1.0 : err)
+        end
+
+    end
+
+    plot_err = plot(
+        xscale = :log10, yscale = :log10, xlabel = "ΔT", ylabel = "||E||",
+        key = (1, 0), size = (1000, 750), thickness_scaling = 4.0
+    )
+    data_colours = [:red, :orange, :green, :blue]
+    log_const = [1, 1, 1, 1]
+    trunc_index = [size(J_array, 1), size(J_array, 1), size(J_array, 1), 12]
+    for (i, order) in enumerate(orders_to_plot)
+        ΔT_array_trunc = ΔT_array[1:trunc_index[i]]
+        err_order_array = log_const[i].*ΔT_array_trunc.^order
+        plot!(
+            plot_err, ΔT_array_trunc, err_order_array,
+            linestyle = :dash, label = L"\sim (\Delta T~)^{%$order}", color = data_colours[i]
+        )
+    end
+    data_labels = [string("SDC", p, "-RK2-Heun's") for p in p_array]
+    for i in axes(err_array, 1)
+        plot!(
+            plot_err,
+            ΔT_array, err_array[i],
             markershape = :circle, label = data_labels[i], color = data_colours[i]
         )
     end
@@ -1088,32 +1146,29 @@ function test_RIDC()
     end
 end
 
-function test_IDC_across_groups_reduced_stencil()
+function test_parallel_IDC_FE_reduced_stencil()
     J_array = 1:20
-    number_corrections = 15
-    number_final_level_nodes = 1
-
-    p = number_corrections + 1
-    orders_to_plot = 1:p
-
-    @unpack_ODETestSystem Butcher_p53_system
+    number_corrections = 8
+    number_final_level_intervals = 1
+    orders_to_plot = 1:(number_corrections .+ 1)
+    
+    @unpack_ODETestSystem log_system
     @unpack_ODESystem ODE_system
+    
+    M_levels = [level for level in 1:number_corrections]
+    push!(M_levels, number_final_level_intervals)
+    uniform_nodes_levels = [range(0, 1, M + 1) for M in M_levels]
+    S_levels = [integration_matrix(uniform_nodes_levels[level - 1], uniform_nodes_levels[level]) for level in 2:(number_corrections + 1)]
+    lagrange_bases = [interpolation_polynomials(uniform_nodes_levels[level]) for level in 1:number_corrections]
 
-    S_levels = []
-    lobatto_nodes_levels = [gausslobatto(level)[1] for level in 2:p]
-    push!(lobatto_nodes_levels, gausslobatto(1 + number_final_level_nodes)[1])
-    for level in 2:p
-        S = integration_matrix(lobatto_nodes_levels[level - 1], lobatto_nodes_levels[level])
-        push!(S_levels, S)
-    end
 
-    Δt_group_array = (t_e - t_s)./J_array
+    ΔT_array = (t_e - t_s)./J_array
     err_array = []
     y_exact_end = y(t_e)
     for J in J_array
-        (_, y_out) = RSDC_FE_lobatto_reduced_stencil(
+        (_, y_out) = parallel_IDC_FE_reduced_stencil(
             ODE_system,
-            J, number_corrections, S_levels, number_final_level_nodes
+            number_corrections, S_levels, J, number_final_level_intervals, lagrange_bases
         )
         y_out_end = real(y_out[end][end])
         err = err_rel(y_exact_end, y_out_end)
@@ -1122,19 +1177,19 @@ function test_IDC_across_groups_reduced_stencil()
 
     ## MAKE ORDER PLOT
     plot_err = plot(
-        xscale = :log10, yscale = :log10, xlabel = L"Δt", ylabel = "||E||",
-        key = :bottomright, size = (1000, 750), thickness_scaling = 2.0, legendfontsize = 6, legendposition = :none
+        xscale = :log10, yscale = :log10, xlabel = "ΔT", ylabel = "||E||",
+        key = (1, 0), size = (1000, 750)
     )
     plot!(
         plot_err,
-        Δt_group_array, err_array,
-        markershape = :circle, label = "Solution approximated with \'RSDC across the groups\'", color = :blue,
+        ΔT_array, err_array,
+        markershape = :circle, label = "", color = :blue,
     )
     for order in orders_to_plot
-        err_order_array = Δt_group_array.^order # Taking error constant = 1 always
+        err_order_array = ΔT_array.^order # Taking error constant = 1 always
         plot!(
-            plot_err, Δt_group_array, err_order_array,
-            linestyle = :dash, label = L"1\cdot (\Delta t_{\text{group}})^%$order"
+            plot_err, ΔT_array, err_order_array,
+            linestyle = :dash, label = L"\sim (\Delta T~)^%$order"
         )
     end
     # dtstring = Dates.format(now(), "DY-m-d-TH-M-S")
@@ -1144,56 +1199,118 @@ function test_IDC_across_groups_reduced_stencil()
 
     ## PRINT ORDER
     for i in axes(err_array)[1][2:end]
-        order = (log(err_array[i]) - log(err_array[i - 1]))/(log(Δt_group_array[i]) - log(Δt_group_array[i - 1]))
+        order = (log(err_array[i]) - log(err_array[i - 1]))/(log(ΔT_array[i]) - log(ΔT_array[i - 1]))
         println(order)
     end
 end
 
-function test_RSDC()
+function test_parallel_SDC_FE_lobatto_reduced_stencil()
     J_array = 1:20
-    number_corrections = 1
-    p = 4*(number_corrections + 1)
-    orders_to_plot = [p - 1, p]
+    number_corrections = 8
+    number_final_level_intervals = 1
 
-    @unpack_ODETestSystem Butcher_p53_system
+    # M_levels = [level for level in 1:number_corrections]
+    M_levels = [ceil(Int64, (level + 1)/2) for level in 1:number_corrections]
+    push!(M_levels, number_final_level_intervals)
+
+    orders_to_plot = 1:(number_corrections .+ 1)
+
+    @unpack_ODETestSystem log_system
     @unpack_ODESystem ODE_system
 
-    # S = integration_matrix_uniform_RK4(p - 1)
-    S = integration_matrix_lobatto_RK4(p)
-    Δt_group_array = (t_e - t_s)./J_array
+    lobatto_nodes_levels = [gausslobatto(M + 1)[1] for M in M_levels]
+    S_levels = [integration_matrix(lobatto_nodes_levels[level - 1], lobatto_nodes_levels[level]) for level in 2:(number_corrections + 1)]
+    lagrange_bases = [interpolation_polynomials((gausslobatto(1 + M_levels[level - 1])[1] .+ 1)./2) for level in 2:(number_corrections + 1)]
+
+
+    ΔT_array = (t_e - t_s)./J_array
     err_array = []
     y_exact_end = y(t_e)
     for J in J_array
-        (_, y_out) = RSDC_RK4_lobatto(
+        (_, y_out) = parallel_SDC_FE_lobatto_reduced_stencil_and_quadrature(
             ODE_system,
-            number_corrections, S, J
+            number_corrections, S_levels, J, number_final_level_intervals, lagrange_bases
         )
-        y_out_end = real(y_out[end, end])
-        err = err_norm(y_exact_end, y_out_end, 2)/norm(y_exact_end, 2)  # Relative 2-norm error
+        y_out_end = real(y_out[end][end])
+        err = err_rel(y_exact_end, y_out_end)
         push!(err_array, err)
     end
 
     ## MAKE ORDER PLOT
     plot_err = plot(
-        xscale = :log10, yscale = :log10, xlabel = L"Δt", ylabel = "||E||",
-        key = :bottomright, size = (1000, 750), thickness_scaling = 2.0, legendfontsize = 6, legendposition = :none
+        xscale = :log10, yscale = :log10, xlabel = "ΔT", ylabel = "||E||",
+        key = (1, 0), size = (1000, 750)
     )
     plot!(
         plot_err,
-        Δt_group_array, err_array,
-        markershape = :circle, label = "Solution approximated with \'RSDC across the groups\'", color = :blue,
+        ΔT_array, err_array,
+        markershape = :circle, label = "", color = :blue,
     )
     for order in orders_to_plot
-        err_order_array = Δt_group_array.^order # Taking error constant = 1 always
+        err_order_array = ΔT_array.^order # Taking error constant = 1 always
         plot!(
-            plot_err, Δt_group_array, err_order_array,
-            linestyle = :dash, label = L"1\cdot (\Delta t_{\text{group}})^%$order"
+            plot_err, ΔT_array, err_order_array,
+            linestyle = :dash, label = L"\sim (\Delta T~)^%$order"
         )
     end
+    # dtstring = Dates.format(now(), "DY-m-d-TH-M-S")
+    # fname = "Ben Code/output/convergence/$dtstring-convergence-IDC_FE,SDC_FE.png"
+    # savefig(plot_err, fname)
+    display(plot_err)
 
     ## PRINT ORDER
     for i in axes(err_array)[1][2:end]
-        order = (log(err_array[i]) - log(err_array[i - 1]))/(log(Δt_group_array[i]) - log(Δt_group_array[i - 1]))
+        order = (log(err_array[i]) - log(err_array[i - 1]))/(log(ΔT_array[i]) - log(ΔT_array[i - 1]))
+        println(order)
+    end
+end
+
+function test_parallel_IDC()
+    number_corrections = 5
+    J_array = number_corrections:20
+    M = ceil(Int64, (number_corrections + 1)/2)
+    p = 2*(number_corrections + 1)
+    orders_to_plot = [p - 1, p]
+
+    @unpack_ODETestSystem sqrt_system
+    @unpack_ODESystem ODE_system
+
+    S = INTEGRATION_MATRIX_ARRAY_LOBATTO[M + 1]
+    # S = INTEGRATION_MATRIX_ARRAY_UNIFORM[M + 1]
+    ΔT_array = (t_e - t_s)./J_array
+    err_array = []
+    y_exact_end = y(t_e)
+    for J in J_array
+        (_, y_out) = parallel_SDC_FE_lobatto_reduced_stencil(
+            ODE_system,
+            number_corrections, S, J, 1, lagrange_basis_array
+        )
+        y_out_end = real(y_out[end, end])
+        err = err_rel_norm(y_exact_end, y_out_end, 2)
+        push!(err_array, err)
+    end
+
+    ## MAKE ORDER PLOT
+    plot_err = plot(
+        xscale = :log10, yscale = :log10, xlabel = "ΔT", ylabel = "||E||",
+        key = (1, 0), size = (1000, 750), thickness_scaling = 4.0
+    )
+    plot!(
+        plot_err,
+        ΔT_array, err_array,
+        markershape = :circle, label = "", color = :blue,
+    )
+    for order in orders_to_plot
+        err_order_array = ΔT_array.^order # Taking error constant = 1 always
+        plot!(
+            plot_err, ΔT_array, err_order_array,
+            linestyle = :dash, label = L"\sim (\Delta T~)^%$order"
+        )
+    end
+
+    # PRINT ORDER
+    for i in axes(err_array)[1][2:end]
+        order = (log(err_array[i]) - log(err_array[i - 1]))/(log(ΔT_array[i]) - log(ΔT_array[i - 1]))
         println(order)
     end
 
@@ -1201,6 +1318,62 @@ function test_RSDC()
     # fname = "Ben Code/output/convergence/$dtstring-convergence-IDC_FE,SDC_FE.png"
     # savefig(plot_err, fname)
     display(plot_err)
-    plot_err
+end
+
+function test_RSDC_reduced_stencils()
+    J_array = 1:20
+    number_corrections = 7
+    p = 1*(number_corrections + 1)
+    orders_to_plot = [p - 1, p]
+
+    @unpack_ODETestSystem log_system
+    @unpack_ODESystem ODE_system
+
+    # S = integration_matrix_uniform_RK4(p - 1)
+    number_final_level_intervals = 3
+    t_levels = [gausslobatto(l + 1)[1] for l in 1:number_corrections]
+    push!(t_levels, gausslobatto(number_final_level_intervals + 1)[1])
+    S_levels = [integration_matrix(t_levels[l], t_levels[l + 1]) for l in 1:number_corrections]
+    ΔT_array = (t_e - t_s)./J_array
+    err_array = []
+    y_exact_end = y(t_e)
+    for J in J_array
+        (_, y_out) = parallel_SDC_FE_lobatto_reduced_stencil(
+            ODE_system,
+            number_corrections, S_levels, J, number_final_level_intervals
+        )
+        y_out_end = real(y_out[end][end])
+        err = err_rel_norm(y_exact_end, y_out_end, 2)
+        push!(err_array, err)
+    end
+
+    ## MAKE ORDER PLOT
+    plot_err = plot(
+        xscale = :log10, yscale = :log10, xlabel = "ΔT", ylabel = "||E||",
+        key = (1, 0), size = (1000, 750), thickness_scaling = 4.0
+    )
+    plot!(
+        plot_err,
+        ΔT_array, err_array,
+        markershape = :circle, label = "", color = :blue,
+    )
+    for order in orders_to_plot
+        err_order_array = ΔT_array.^order # Taking error constant = 1 always
+        plot!(
+            plot_err, ΔT_array, err_order_array,
+            linestyle = :dash, label = L"\sim (\Delta T~)^%$order"
+        )
+    end
+
+    ## PRINT ORDER
+    # for i in axes(err_array)[1][2:end]
+    #     order = (log(err_array[i]) - log(err_array[i - 1]))/(log(Δt_group_array[i]) - log(Δt_group_array[i - 1]))
+    #     println(order)
+    # end
+
+    # dtstring = Dates.format(now(), "DY-m-d-TH-M-S")
+    # fname = "Ben Code/output/convergence/$dtstring-convergence-IDC_FE,SDC_FE.png"
+    # savefig(plot_err, fname)
+    display(plot_err)
 end
 

@@ -75,35 +75,45 @@ export
     fill_integration_matrix_array_lobatto_half_time_steps,
     interpolation_polynomials,
     interpolation_func,
-    ## IDC ALGORITHMS
-    # IDC
-    IDC_FE_single,
+    ### INTEGRAL DEFERRED CORRECTION ALGORITHMS
+    ## IDC
+    # COMPOSITE IDC
     IDC_FE,
     IDC_RK2_Heuns,
     IDC_RK2_midpoint,
     IDC_RK3,
     IDC_RK4,
-    # SDC
+    # NON-COMPOSITE IDC
+    IDC_FE_single,
+    ## SDC
     sandwich_special_nodes,
-    SDC_FE_legendre_single,
-    SDC_FE_lobatto_single,
+    # COMPOSITE SDC
     SDC_FE_legendre,
     SDC_RK4_legendre,
     SDC_FE_lobatto,
-    SDC_FE_lobatto_reduced_stencil,
+    SDC_FE_lobatto_reduced_quadrature,
     SDC_RK2_Heuns_lobatto,
+    SDC_RK2_Heuns_lobatto_reduced_quadrature,
+    SDC_RK2_Heuns_lobatto_reduced_quadrature_convergence_enhanced,
     SDC_RK4_lobatto,
-    # RIDC
+    # NON-COMPOSITE SDC
+    SDC_FE_legendre_single,
+    SDC_FE_lobatto_single,
+    ## RIDC
     RIDC_FE,
     RIDC_FE_reduced_stencil,
     RIDC_RK2_Heuns_reduced_stencil,
     RIDC_RK4,
-    # RSDC
-    RSDC_FE_uniform,
-    RSDC_RK4_uniform,
-    RSDC_FE_lobatto,
-    RSDC_FE_lobatto_reduced_stencil,
-    RSDC_RK4_lobatto
+    ## PARALLEL OVER THE GROUPS ALGORITHMS
+    parallel_IDC_FE,
+    parallel_IDC_FE_reduced_stencil,
+    parallel_IDC_RK2_Heuns,
+    parallel_IDC_RK4,
+    parallel_SDC_FE_lobatto,
+    parallel_SDC_FE_lobatto_reduced_quadrature,
+    parallel_SDC_FE_lobatto_reduced_stencil,
+    parallel_SDC_FE_lobatto_reduced_stencil_and_quadrature,
+    parallel_SDC_RK4_lobatto
 
 
 ### STUFF FOR TESTING
@@ -647,12 +657,12 @@ function fill_integration_matrix_array_lobatto_half_time_steps(max_size; use_dou
 end
 
 
-""" assume range(t_values) = 1 """
+""" assume t_for_interp ∈ [0, 1] """
 function interpolation_polynomials(t_for_interp)
     scipy_interpolate = pyimport("scipy.interpolate")
 
     p_func = []
-    for i in axes(t_for_interp)[1]
+    for i in axes(t_for_interp, 1)
         yᵢ = zeros(Float64, size(t_for_interp))
         yᵢ[i] = 1.0
         pᵢ_coeffs = scipy_interpolate.lagrange(t_for_interp, yᵢ).c |> reverse # Lagrange interpolant to yᵢ at t
@@ -1341,7 +1351,7 @@ function SDC_FE_lobatto(
     return (t, η)
 end
 
-function SDC_FE_lobatto_reduced_stencil(
+function SDC_FE_lobatto_reduced_quadrature(
     ODE_system::ODESystem,
     number_corrections, S, J
 )
@@ -1390,14 +1400,15 @@ end
 """
 By
 https://doi.org/10.1090/S0025-5718-09-02276-5
-this algorithm should not work.
+this algorithm illicits only single order improvement with every sucessive
+correction.
 """
-function SDC_RK2_Heuns_lobatto(
+function SDC_RK2_Heuns_lobatto_reduced_quadrature(
     ODE_system::ODESystem,
     number_corrections, S, J
 )
     @unpack_ODESystem ODE_system
-    M = 2*(number_corrections + 1) - 1
+    M = number_corrections + 1
     N = J*M
     t_gl = gausslobatto(M + 1)[1]
     (t, group_scale_factor) = sandwich_special_nodes(t_gl, true, t_s, t_e, J)
@@ -1417,6 +1428,76 @@ function SDC_RK2_Heuns_lobatto(
         I_group = (j*M + 1):((j + 1)*M + 1)
         for level in 2:(number_corrections + 1)
             f_group = f.(t[I_group], η[I_group, level - 1])
+            for m in 1:M
+                k = j*M + m
+
+                ∫fₘ = group_scale_factor.*[sum(S[m, s]*f_group[s][i] for s in axes(S, 2)) for i in axes(y_s, 1)]
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                end
+
+                stage_1 = f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])
+                stage_2 = f(t[k + 1], η[k, level] .+ Δt[k].*stage_1 .+ ∫fₘ).- f(t[k + 1], η[k + 1, level - 1])
+                η[k + 1, level] = η[k, level] .+ (Δt[k]/2).*(stage_1 .+ stage_2) .+ ∫fₘ
+            end
+        end
+        # At the end of group evaluation, give most corrected value to all nodes
+        # for next group's evaluation.
+        # (j == J - 1) && continue
+        k_end = (j + 1)*M + 1
+        for level in 1:number_corrections
+            η[k_end, level] = η[k_end, end]
+        end
+    end
+
+    return (t, η)
+end
+
+
+"""
+algorithm 2.2. of:
+https://doi.org/10.1007/s10915-012-9657-9 .
+
+Not yet correctly implemented
+"""
+function SDC_RK2_Heuns_lobatto_reduced_quadrature_convergence_enhanced(
+    ODE_system::ODESystem,
+    number_corrections, S, J, Λ
+)
+    @unpack_ODESystem ODE_system
+    M = number_corrections + 1
+    N = J*M
+    t_gl = gausslobatto(M + 1)[1]
+    (t, group_scale_factor) = sandwich_special_nodes(t_gl, true, t_s, t_e, J)
+    Δt = t[2:end] .- t[1:end - 1]
+    η = initialise_η(y_s, N, number_corrections)
+
+    for j in 0:(J - 1)
+        # Predict
+        for m in 1:M
+            k = j*M + m
+            stage_1 = f(t[k], η[k, 1])
+            stage_2 = f(t[k] + Δt[k], η[k, 1] .+ Δt[k].*stage_1)
+            η[k + 1, 1] = η[k, 1] .+ (stage_1 .+ stage_2).*Δt[k]/2
+        end
+
+        # Correct
+        I_group = (j*M + 1):((j + 1)*M + 1)
+        for level in 2:(number_corrections + 1)
+            f_group = f.(t[I_group], η[I_group, level - 1])
+            # Convergence enhancement
+            ξ_group = copy(η[I_group, level - 1])
+            for λ in 1:(Λ - 1)
+                for m in 1:M
+                    ξ_group[m + 1] = η[I_group[1], level - 1] + group_scale_factor*sum(
+                        f_group[s]*sum(S[l, s] for l in 1:m)
+                        for s in axes(S, 2)
+                    )   
+                end
+            end
+            η[I_group, level - 1] = ξ_group
+
+            # Perform correction iteration
             for m in 1:M
                 k = j*M + m
 
@@ -1788,7 +1869,7 @@ the groups'.
 
 With uniform nodes this is effectively RIDC(K = N, J = 1).
 """
-function RSDC_FE_uniform(
+function parallel_IDC_FE(
     ODE_system::ODESystem,
     number_corrections, S, J
 )
@@ -1807,7 +1888,7 @@ function RSDC_FE_uniform(
             η[k + 1, 1] = η[k, 1] .+ Δt.*f(t[k], η[k, 1])
         end
     end
-        # Correction loop
+    # Correction loop
     for level in 2:(number_corrections + 1)
         for j in 0:(J - 1)
             I = (j*M + 1):((j + 1)*M + 1)
@@ -1826,7 +1907,105 @@ function RSDC_FE_uniform(
     return (t, η)
 end
 
-function RSDC_RK4_uniform(
+function parallel_IDC_FE_reduced_stencil(
+    ODE_system::ODESystem,
+    number_corrections, S_levels, J, number_final_level_intervals, lagrange_bases
+)
+    @unpack_ODESystem ODE_system
+    # Each level does a different number of approximations
+    M_levels = [level for level in 1:number_corrections]
+    push!(M_levels, number_final_level_intervals)
+
+    η = [initialise_η(y_s, M*J, 0) for M in M_levels]
+
+    t_groups = range(t_s, t_e, J + 1)
+    ΔT = t_groups[2] - t_groups[1]
+    # All necessary uniform nodes over [0, ΔT]
+    t_unif_levels = [range(0, ΔT, M + 1) for M in M_levels]
+
+    (number_corrections == length(S_levels)) || throw(error("there must be as many integration matrices as corrections"))
+    (number_final_level_intervals >= 1) || throw(error("must have at least one node in the final level"))
+
+    # Predict over groups
+    for j in 0:(J - 1)
+        k = j + 1
+        t_unif_current = t_unif_levels[1]
+        η[1][k + 1] = η[1][k] + ΔT*f(t_unif_current[1] + t_groups[j + 1], η[1][k])
+    end
+
+    # Correct over groups
+    for level in 2:(number_corrections + 1)
+        M_current = M_levels[level]
+        M_prev = M_levels[level - 1]
+
+        t_unif_current = t_unif_levels[level]
+        t_unif_prev = t_unif_levels[level - 1]
+        Δt_unif_current = t_unif_current[2:end] .- t_unif_current[1:end - 1]
+        for j in 0:(J - 1)
+            t_current = t_unif_current .+ t_groups[j + 1]
+            t_prev = t_unif_prev .+ t_groups[j + 1]
+
+            prev_group_indices = (j*M_prev + 1):((j + 1)*M_prev + 1)
+            # Calculate interpolating polynomial over previous level's group of values
+            η_prev_interp = interpolation_func(η[level - 1][prev_group_indices], lagrange_bases[level - 1], t_groups[j + 1], t_groups[j + 2])
+            for m in 1:M_current
+                k = j*M_current + m
+
+                ∫fₘ = dot(S_levels[level - 1][m, :], f.(t_prev, η[level - 1][prev_group_indices]))*ΔT
+                η_prevₘ = η_prev_interp(t_current[m])
+
+                η[level][k + 1] = η[level][k] + Δt_unif_current[m]*(f(t_current[m], η[level][k]) - f(t_current[m], η_prevₘ)) + ∫fₘ
+            end
+        end
+    end
+
+    return (t_groups, η)
+end
+
+
+function parallel_IDC_RK2_Heuns(
+    ODE_system::ODESystem,
+    number_corrections, S, J
+)
+    # Initialise variables
+    @unpack_ODESystem ODE_system
+    M = 2*(number_corrections + 1) - 1
+    N = J*M
+    t = range(t_s, t_e, N + 1)
+    Δt = (t_e - t_s)/N
+    η = initialise_η(y_s, N, number_corrections)
+
+    for j in 0:(J - 1)
+        # Prediction loop
+        for m in 1:M
+            k = j*M + m
+            stage_1 = f(t[k], η[k, 1])
+            stage_2 = f(t[k] + Δt, η[k, 1] .+ Δt.*stage_1)
+            η[k + 1, 1] = η[k, 1] .+ (stage_1 .+ stage_2).*Δt/2
+        end
+    end
+    # Correction loop
+    for level in 2:(number_corrections + 1)
+        for j in 0:(J - 1)
+            I = (j*M + 1):((j + 1)*M + 1)
+            f_group = f.(t[I], η[I, level - 1])
+            for m in 1:M
+                k = j*M + m
+                ∫fₘ = [sum(S[m, j]*f_group[j][i] for j in axes(S, 2)) for i in axes(y_s, 1)]
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                end
+                stage_1 = f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])
+                stage_2 = f(t[k + 1], η[k, level] .+ Δt.*stage_1 .+ Δt.*∫fₘ) .- f(t[k + 1], η[k + 1, level - 1])
+                η[k + 1, level] = η[k, level] .+ 0.5Δt.*(stage_1 .+ stage_2) .+ Δt.*∫fₘ
+            end
+        end
+    end
+
+    return (t, η)
+end
+
+function parallel_IDC_RK4(
     ODE_system::ODESystem,
     number_corrections, S, J
 )
@@ -1881,12 +2060,12 @@ function RSDC_RK4_uniform(
     return (t, η)
 end
 
-function RSDC_FE_lobatto(
+function parallel_SDC_FE_lobatto_reduced_quadrature(
     ODE_system::ODESystem,
     number_corrections, S, J
 )
     @unpack_ODESystem ODE_system
-    M = number_corrections
+    M = ceil(Int64, (number_corrections + 1)/2)
     N = J*M
     t_gl = gausslobatto(M + 1)[1]
     (t, group_scale_factor) = sandwich_special_nodes(t_gl, true, t_s, t_e, J)
@@ -1920,44 +2099,37 @@ function RSDC_FE_lobatto(
     return (t, η)
 end
 
-function RSDC_FE_lobatto_reduced_stencil(
+function parallel_SDC_FE_lobatto_reduced_stencil(
     ODE_system::ODESystem,
-    J, number_corrections, S_levels, number_final_level_nodes
+    number_corrections, S_levels, J, number_final_level_intervals, lagrange_bases
 )
-    scipy_bary_interp = pyimport("scipy.interpolate").BarycentricInterpolator
-
     @unpack_ODESystem ODE_system
-    p = number_corrections + 1
-
     # Each level does a different number of approximations
-    η = [zeros(typeof(y_s), level*J + 1) for level in 1:number_corrections]
-    push!(η, zeros(typeof(y_s), number_final_level_nodes*J + 1))
-    for level in 1:p
-        η[level][1] = y_s
-    end
+    M_levels = [level for level in 1:number_corrections]
+    push!(M_levels, number_final_level_intervals)
+
+    η = [initialise_η(y_s, M*J, 0) for M in M_levels]
 
     t_groups = range(t_s, t_e, J + 1)
-    Δt_group = t_groups[2] - t_groups[1]
+    ΔT = t_groups[2] - t_groups[1]
     # All necessary Gauss-Lobatto nodes over [-1, 1] and scale these to nodes over [0, Δt_group]
-    t_gl_levels = [gausslobatto(1 + level)[1] for level in 1:number_corrections]
-    push!(t_gl_levels, gausslobatto(1 + number_final_level_nodes)[1])
-    for (level, t_gl) in enumerate(t_gl_levels)
-        t_gl = (t_gl .+ 1).*(Δt_group/2)
-        t_gl_levels[level] = t_gl
-    end
+    t_gl_levels = [(gausslobatto(1 + M)[1] .+ 1).*(ΔT/2) for M in M_levels]
 
     (number_corrections == length(S_levels)) || throw(error("there must be as many integration matrices as corrections"))
-    (number_final_level_nodes >= 1) || throw(error("must have at least one node in the final level"))
+    (number_final_level_intervals >= 1) || throw(error("must have at least one node in the final level"))
 
     # Predict over groups
     for j in 0:(J - 1)
         k = j + 1
         t_gl_current = t_gl_levels[1]
-        η[1][k + 1] = η[1][k] + Δt_group*f(t_gl_current[1] + t_groups[j + 1], η[1][k])
+        η[1][k + 1] = η[1][k] + ΔT*f(t_gl_current[1] + t_groups[j + 1], η[1][k])
     end
 
     # Correct over groups
-    for level in 2:p
+    for level in 2:(number_corrections + 1)
+        M_current = M_levels[level]
+        M_prev = M_levels[level - 1]
+
         t_gl_current = t_gl_levels[level]
         t_gl_prev = t_gl_levels[level - 1]
         Δt_gl_current = t_gl_current[2:end] .- t_gl_current[1:end - 1]
@@ -1965,14 +2137,73 @@ function RSDC_FE_lobatto_reduced_stencil(
             t_current = t_gl_current .+ t_groups[j + 1]
             t_prev = t_gl_prev .+ t_groups[j + 1]
 
-            group_indices = (j*(length(t_prev) - 1) + 1):((j + 1)*(length(t_prev) - 1) + 1)
+            prev_group_indices = (j*M_prev + 1):((j + 1)*M_prev + 1)
             # Calculate interpolating polynomial over previous level's group of values
-            η_prev_interp = scipy_bary_interp(t_prev, η[level - 1][group_indices])
-            for m in 1:(length(t_current) - 1)
-                k = j*(length(t_current) - 1) + m
+            η_prev_interp = interpolation_func(η[level - 1][prev_group_indices], lagrange_bases[level - 1], t_groups[j + 1], t_groups[j + 2])
+            for m in 1:M_current
+                k = j*M_current + m
 
-                ∫fₘ = dot(S_levels[level - 1][m, :], f.(t_prev, η[level - 1][group_indices]))*Δt_group/2
-                η_prevₘ = η_prev_interp(t_current[m])[1]
+                ∫fₘ = dot(S_levels[level - 1][m, :], f.(t_prev, η[level - 1][prev_group_indices]))*ΔT/2
+                η_prevₘ = η_prev_interp(t_current[m])
+
+                η[level][k + 1] = η[level][k] + Δt_gl_current[m]*(f(t_current[m], η[level][k]) - f(t_current[m], η_prevₘ)) + ∫fₘ
+            end
+        end
+    end
+
+    return (t_groups, η)
+end
+
+function parallel_SDC_FE_lobatto_reduced_stencil_and_quadrature(
+    ODE_system::ODESystem,
+    number_corrections, S_levels, J, number_final_level_intervals, lagrange_bases
+)
+    @unpack_ODESystem ODE_system
+    # Each level does a different number of approximations
+    M_levels = [ceil(Int64, (level + 1)/2) for level in 1:number_corrections]
+    push!(M_levels, number_final_level_intervals)
+
+    η = [initialise_η(y_s, M*J, 0) for M in M_levels]
+
+    t_groups = range(t_s, t_e, J + 1)
+    ΔT = t_groups[2] - t_groups[1]
+    # All necessary Gauss-Lobatto nodes over [-1, 1] and scale these to nodes over [0, Δt_group]
+    t_gl_levels = [(gausslobatto(1 + M)[1] .+ 1).*(ΔT/2) for M in M_levels]
+
+    (number_corrections == length(S_levels)) || throw(error("there must be as many integration matrices as corrections"))
+    (number_final_level_intervals >= 1) || throw(error("must have at least one node in the final level"))
+
+    # Predict over groups
+    for j in 0:(J - 1)
+        # this inner loop is not strictly necessary as M_levels[1] = 1
+        for m in 1:M_levels[1]
+            k = j*M_levels[1] + m
+            t_gl_current = t_gl_levels[1]
+            η[1][k + 1] = η[1][k] + ΔT*f(t_gl_current[1] + t_groups[j + 1], η[1][k])
+        end
+    end
+
+    # Correct over groups
+    for level in 2:(number_corrections + 1)
+        M_current = M_levels[level]
+        M_prev = M_levels[level - 1]
+
+        t_gl_current = t_gl_levels[level]
+        t_gl_prev = t_gl_levels[level - 1]
+        Δt_gl_current = t_gl_current[2:end] .- t_gl_current[1:end - 1]
+        for j in 0:(J - 1)
+            t_current = t_gl_current .+ t_groups[j + 1]
+            t_prev = t_gl_prev .+ t_groups[j + 1]
+
+            prev_group_indices = (j*M_prev + 1):((j + 1)*M_prev + 1)
+            # Calculate interpolating polynomial over previous level's group of values
+            η_prev_interp = interpolation_func(η[level - 1][prev_group_indices], lagrange_bases[level - 1], t_groups[j + 1], t_groups[j + 2])
+            for m in 1:M_current
+                k = j*M_current + m
+
+                ∫fₘ = dot(S_levels[level - 1][m, :], f.(t_prev, η[level - 1][prev_group_indices]))*ΔT/2
+                η_prevₘ = η_prev_interp(t_current[m])
+
                 η[level][k + 1] = η[level][k] + Δt_gl_current[m]*(f(t_current[m], η[level][k]) - f(t_current[m], η_prevₘ)) + ∫fₘ
             end
         end
@@ -1986,7 +2217,7 @@ By
 https://doi.org/10.1090/S0025-5718-09-02276-5
 this algorithm should not work.
 """
-function RSDC_RK4_lobatto(
+function parallel_SDC_RK4_lobatto(
     ODE_system::ODESystem,
     number_corrections, S, J
 )
