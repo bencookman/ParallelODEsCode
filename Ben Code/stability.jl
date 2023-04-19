@@ -148,7 +148,7 @@ Find the border to the stability region (where Am(λΔt)≈1) for an integration
 scheme.
 """
 function find_schemes_polar_stability_border(
-    scheme;
+    scheme, scale;
     θ_res = 100, Δr = 0.01
 )
     integrator = scheme[1]
@@ -166,13 +166,13 @@ function find_schemes_polar_stability_border(
 
             ODE_system = ODESystem(
                 (t, y) -> λ*y,
-                1.0,
+                1.0/scale,
                 1.0 + 0.0im
             )
             (_, η) = integrator(ODE_system, parameters...)
 
 
-            is_z_stable = (abs.(η[end]) < 1.0)
+            is_z_stable = (abs(η[end][end]) < 1.0)
             if !is_z_stable
                 ∂S[i] = λ_old
                 break
@@ -193,10 +193,10 @@ function plot_schemes_polar_stability_borders(
     # Get border data
     ∂S_array = [
         find_schemes_polar_stability_border(
-            scheme;
+            scheme, scale;
             θ_res = θ_res, Δr = Δr
         )
-        for (scheme, _, _) in schemes_scales_names
+        for (scheme, scale, _) in schemes_scales_names
     ]
     # Plot borders
     border_plot = plot(
@@ -212,7 +212,7 @@ function plot_schemes_polar_stability_borders(
     border_plot_color(i) = colours[(i - 1)%length(colours) + 1]
     for (i, ∂S) in enumerate(∂S_array)
         plot!(
-            border_plot, real(∂S).*schemes_scales_names[i][2], imag(∂S).*schemes_scales_names[i][2],
+            border_plot, real(∂S), imag(∂S),
             color = border_plot_color(i), label = schemes_scales_names[i][3],
         )
     end
@@ -233,7 +233,7 @@ Uses a Cartesian discretisation of the complex plane and returns two matrices:
 stability_mesh = whether or not the corresponding value on λ was stable or not.
 """
 function find_schemes_cartesian_stability_mesh(
-    scheme;
+    scheme, scale;
     x_values = x_values, y_values = y_values
 )
     integrator = scheme[1]
@@ -249,13 +249,13 @@ function find_schemes_cartesian_stability_mesh(
         λ = λ_mesh[i, j]
         ODE_system = ODESystem(
             (t, η) -> λ*η,
-            1.0,
+            1.0/scale,
             1.0 + 0.0im
         )
         (t, η) = integrator(ODE_system, parameters...)
 
         # Is this λ value stable or not
-        η_end = η[end, end]
+        η_end = η[end][end]
         is_z_stable = (abs(η_end) < 1.0)
         stability_mesh[i, j] = is_z_stable
     end
@@ -277,9 +277,9 @@ function plot_schemes_cartesian_stability_meshes(
     x_values = range(x_range[1], x_range[2], x_res)
     y_values = range(y_range[1], y_range[2], y_res)
     stability_meshes = []
-    for (scheme, _) in schemes_scales
+    for (scheme, scale) in schemes_scales
         stability_mesh = find_schemes_cartesian_stability_mesh(
-            scheme;
+            scheme, scale;
             x_values = x_values, y_values = y_values
         )
         push!(stability_meshes, stability_mesh)
@@ -300,7 +300,7 @@ function plot_schemes_cartesian_stability_meshes(
     for (i, stability_mesh) in enumerate(stability_meshes)
         heatmap!(
             stability_heatmap,
-            x_values*schemes_scales[i][2], y_values*schemes_scales[i][2],
+            x_values, y_values,
             stability_to_value.(stability_mesh; stable_value = i, unstable_value = NaN),
             fillalpha = 0.35, seriescolor = cgrad(:rainbow)
         )
@@ -638,6 +638,192 @@ function stability_test_IDC_SDC_legendre()
     x_range = (-12, 2)
     y_range = (-9, 9)
     x_ticks = [-12, -8, -4, 0]
+    y_ticks = [-8, -4, 0, 4, 8]
+    plot_schemes_polar_stability_borders(
+        schemes_scales_names;
+        θ_res = θ_res, Δr = Δr,
+        x_range = x_range, y_range = y_range,
+        x_ticks = x_ticks, y_ticks = y_ticks
+    )
+    # plot_schemes_cartesian_stability_meshes(
+    #     schemes_scales_names;
+    #     x_res = x_res, y_res = y_res,
+    #     x_range = x_range, y_range = y_range,
+    #     x_ticks = x_ticks, y_ticks = y_ticks
+    # )
+end
+
+function stability_test_PCIDC4_groups()
+    schemes_scales_names = reverse([
+        (
+            (
+                PCIDC_FE,
+                (3, INTEGRATION_MATRIX_ARRAY_UNIFORM[4], 1),
+            ),
+            1.0
+        ),
+        (
+            (
+                PCIDC_FE,
+                (3, INTEGRATION_MATRIX_ARRAY_UNIFORM[4], 2),
+            ),
+            1.0/2
+        ),
+        (
+            (
+                PCIDC_FE,
+                (3, INTEGRATION_MATRIX_ARRAY_UNIFORM[4], 10),
+            ),
+            1.0/10
+        ),
+        (
+            (
+                PCIDC_FE,
+                (3, INTEGRATION_MATRIX_ARRAY_UNIFORM[4], 100),
+            ),
+            1.0/100
+        ),
+    ])
+    x_res = 300
+    y_res = 300
+    # θ_res = 100
+    # Δr = 0.02
+    x_range = (-7, 1)
+    y_range = (-5, 5)
+    x_ticks = [-6, -3, 0]
+    y_ticks = [-4, -2, 0, 2, 4]
+    # plot_schemes_polar_stability_borders(
+    #     schemes_scales_names;
+    #     θ_res = θ_res, Δr = Δr,
+    #     x_range = x_range, y_range = y_range,
+    #     x_ticks = x_ticks, y_ticks = y_ticks
+    # )
+    plot_schemes_cartesian_stability_meshes(
+        schemes_scales_names;
+        x_res = x_res, y_res = y_res,
+        x_range = x_range, y_range = y_range,
+        x_ticks = x_ticks, y_ticks = y_ticks
+    )
+end
+
+function stability_test_PCSDC4_groups()
+    schemes_scales_names = reverse([
+        (
+            (
+                PCSDC_FE_lobatto_reduced_quadrature,
+                (3, INTEGRATION_MATRIX_ARRAY_LOBATTO[3], 1),
+            ),
+            1.0
+        ),
+        (
+            (
+                PCSDC_FE_lobatto_reduced_quadrature,
+                (3, INTEGRATION_MATRIX_ARRAY_LOBATTO[3], 2),
+            ),
+            1.0/2
+        ),
+        (
+            (
+                PCSDC_FE_lobatto_reduced_quadrature,
+                (3, INTEGRATION_MATRIX_ARRAY_LOBATTO[3], 10),
+            ),
+            1.0/10
+        ),
+        (
+            (
+                PCSDC_FE_lobatto_reduced_quadrature,
+                (3, INTEGRATION_MATRIX_ARRAY_LOBATTO[3], 100),
+            ),
+            1.0/100
+        ),
+    ])
+    x_res = 250
+    y_res = 250
+    # θ_res = 100
+    # Δr = 0.02
+    x_range = (-4.5, 1)
+    y_range = (-3.5, 3.5)
+    x_ticks = [-4, -2, 0]
+    y_ticks = [-2, 0, 2]
+    # plot_schemes_polar_stability_borders(
+    #     schemes_scales_names;
+    #     θ_res = θ_res, Δr = Δr,
+    #     x_range = x_range, y_range = y_range,
+    #     x_ticks = x_ticks, y_ticks = y_ticks
+    # )
+    plot_schemes_cartesian_stability_meshes(
+        schemes_scales_names;
+        x_res = x_res, y_res = y_res,
+        x_range = x_range, y_range = y_range,
+        x_ticks = x_ticks, y_ticks = y_ticks
+    )
+end
+
+function stability_test_PCIDC4_reduced_stencil_L()
+    L_array = [1, 5, 20, 50]
+    number_corrections = 3
+    J = 1
+    params_tuple = [get_PCIDC_FE_reduced_stencil_args(number_corrections, L) for L in L_array]
+
+    schemes_scales_names = [
+        (
+            (
+                PCIDC_FE_reduced_stencil,
+                (number_corrections, params_tuple[i][1], J, L, params_tuple[i][2]),
+                -2.0 + 0.0im
+            ),
+            1.0/J,
+            string("L = ", L)
+        )
+        for (i, L) in enumerate(L_array)
+    ]
+    # x_res = 500
+    # y_res = 500
+    θ_res = 400
+    Δr = 0.005
+    x_range = (-10, 1)
+    y_range = (-9, 9)
+    x_ticks = [-8, -4, 0]
+    y_ticks = [-8, -4, 0, 4, 8]
+    plot_schemes_polar_stability_borders(
+        schemes_scales_names;
+        θ_res = θ_res, Δr = Δr,
+        x_range = x_range, y_range = y_range,
+        x_ticks = x_ticks, y_ticks = y_ticks
+    )
+    # plot_schemes_cartesian_stability_meshes(
+    #     schemes_scales_names;
+    #     x_res = x_res, y_res = y_res,
+    #     x_range = x_range, y_range = y_range,
+    #     x_ticks = x_ticks, y_ticks = y_ticks
+    # )
+end
+
+function stability_test_PCSDC4_reduced_stencil_increased_quadrature_L()
+    L_array = [1, 5, 20, 50]
+    number_corrections = 3
+    J = 1
+    params_tuple = [get_PCIDC_FE_reduced_stencil_args(number_corrections, L) for L in L_array]
+
+    schemes_scales_names = [
+        (
+            (
+                PCSDC_FE_lobatto_reduced_stencil,
+                (number_corrections, params_tuple[i][1], J, L, params_tuple[i][2]),
+                -2.5 + 0.0im
+            ),
+            1.0/J,
+            string("L = ", L)
+        )
+        for (i, L) in enumerate(L_array)
+    ]
+    # x_res = 500
+    # y_res = 500
+    θ_res = 400
+    Δr = 0.005
+    x_range = (-10, 1)
+    y_range = (-9, 9)
+    x_ticks = [-8, -4, 0]
     y_ticks = [-8, -4, 0, 4, 8]
     plot_schemes_polar_stability_borders(
         schemes_scales_names;

@@ -183,9 +183,8 @@ function integration_matrix_test_classic_uniform(N_array)
         g̲ = g.(t)
         W = INTEGRATION_MATRIX_ARRAY_UNIFORM[N]
         I_N = dot(W[1, :], g̲)
-        I = G(t[2]) - G(t[1])     # Exact integral between consecutive time points changes
+        # I = G(t[2]) - G(t[1])     # Exact integral between consecutive time points changes
 
-        # err = abs(I - I_N)/abs(I)
         err = abs(I_N)              # Absolute value of I_N blows up quickly when it should not
         push!(err_array, err)
     end
@@ -193,18 +192,13 @@ function integration_matrix_test_classic_uniform(N_array)
     # Plot integral test results
     test_plot = plot(
         N_array, err_array,
-        yscale = :log10, xlabel = L"N", ylabel = L"|I_N|",
-        thickness_scaling = 1.0,
-        legend = false,
-        size = (900, 800),
+        yscale = :log10, xlabel = "N", ylabel = string("|I", L"_N", "|"),
+        xticks = [1, 10, 20, 30], yticks = [1e-2, 1, 1e2],
+        thickness_scaling = 4.0,
+        label = "",
         markershape = :circle, color = :blue,
-        topmargin = 2mm
     )
     display(test_plot)
-
-    # dtstring = Dates.format(now(), "DY-m-d-TH-M-S")
-    # fname = "Ben Code/output/$dtstring-int-matrix-test_classic.png"
-    # savefig(test_plot, fname)
 end
 
 function integration_matrix_test_classic_legendre(N_array)

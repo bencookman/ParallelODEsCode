@@ -105,15 +105,19 @@ export
     RIDC_RK2_Heuns_reduced_stencil,
     RIDC_RK4,
     ## PARALLEL OVER THE GROUPS ALGORITHMS
-    parallel_IDC_FE,
-    parallel_IDC_FE_reduced_stencil,
-    parallel_IDC_RK2_Heuns,
-    parallel_IDC_RK4,
-    parallel_SDC_FE_lobatto,
-    parallel_SDC_FE_lobatto_reduced_quadrature,
-    parallel_SDC_FE_lobatto_reduced_stencil,
-    parallel_SDC_FE_lobatto_reduced_stencil_and_quadrature,
-    parallel_SDC_RK4_lobatto
+    get_PCIDC_FE_reduced_stencil_M,
+    get_PCIDC_FE_reduced_stencil_args,
+    get_PCSDC_FE_lobatto_reduced_stencil_M,
+    get_PCSDC_FE_lobatto_reduced_stencil_args,
+    PCIDC_FE,
+    PCIDC_FE_reduced_stencil,
+    PCIDC_RK2_Heuns,
+    PCIDC_RK4,
+    PCSDC_FE_lobatto,
+    PCSDC_FE_lobatto_reduced_quadrature,
+    PCSDC_FE_lobatto_reduced_stencil,
+    PCSDC_FE_lobatto_reduced_stencil_and_quadrature,
+    PCSDC_RK4_lobatto
 
 
 ### STUFF FOR TESTING
@@ -1835,32 +1839,56 @@ end
 
 ## IDC ACROSS GROUPS
 
-function predict_group(
-    η_start, t_group,
-    f, value_type,
-    M, Δt
-)
-    η_group = zeros(value_type, M + 1)
-    η_group[1] = η_start
-    for m in 1:M
-        η_group[m + 1] = η_group[m] + Δt*f(t_group[m], η_group[m])
-    end
-    return η_group
+
+"""
+Calculates M values at every correction level for a chosen L and
+number_corrections and returns in a tuple.
+"""
+function get_PCIDC_FE_reduced_stencil_M(number_corrections, L)
+    M_levels = [level for level in 1:number_corrections]
+    push!(M_levels, L)
+    return M_levels
 end
 
-function correct_group(
-    η_start, t_group, η_old_group,
-    f, value_type,
-    M, S, Δt
-)
-    η_group = zeros(value_type, M + 1)
-    η_group[1] = η_start
-    for m in 1:M
-        ∫fₘ = dot(S[m, :], f.(t_group, η_old_group))
-        η_group[m + 1] = η_group[m] + Δt*(f(t_group[m], η_group[m]) - f(t_group[m], η_old_group[m])) + Δt*∫fₘ
-    end
-    return η_group
+"""
+Returns the array of integration matrices and Lagrange basis functions for a
+PCIDC-FE algorithm in a tuple.
+"""
+function get_PCIDC_FE_reduced_stencil_args(number_corrections, L)
+    M_levels = get_PCIDC_FE_reduced_stencil_M(number_corrections, L)
+
+    uniform_nodes_levels = [range(0, 1, M + 1) for M in M_levels]
+    S_levels = [integration_matrix(uniform_nodes_levels[level - 1], uniform_nodes_levels[level]) for level in 2:(number_corrections + 1)]
+    lagrange_bases_levels = [interpolation_polynomials(uniform_nodes) for uniform_nodes in uniform_nodes_levels]
+
+    return (S_levels, lagrange_bases_levels)
 end
+
+"""
+Calculates M values at every correction level for a chosen L and
+number_corrections and returns in a tuple.
+"""
+function get_PCSDC_FE_lobatto_reduced_stencil_M(number_corrections, L)
+    M_levels = [ceil(Int64, (level + 1)/2) for level in 1:number_corrections]
+    push!(M_levels, L)
+    return M_levels
+end
+
+"""
+Returns the array of integration matrices and Lagrange basis functions for a
+PCIDC-FE algorithm in a tuple.
+"""
+function get_PCSDC_FE_lobatto_reduced_stencil_args(number_corrections, L)
+    M_levels = get_PCSDC_FE_lobatto_reduced_stencil_M(number_corrections, L)
+
+    lobatto_nodes_levels = [gausslobatto(M + 1)[1] for M in M_levels]
+    S_levels = [integration_matrix(lobatto_nodes_levels[level - 1], lobatto_nodes_levels[level]) for level in 2:(number_corrections + 1)]
+    lagrange_bases_levels = [interpolation_polynomials(uniform_nodes) for uniform_nodes in lobatto_nodes_levels]
+
+    return (S_levels, lagrange_bases_levels)
+end
+
+
 
 """
 A slightly modified IDC method where we do the prediction and correction levels
@@ -1869,7 +1897,7 @@ the groups'.
 
 With uniform nodes this is effectively RIDC(K = N, J = 1).
 """
-function parallel_IDC_FE(
+function PCIDC_FE(
     ODE_system::ODESystem,
     number_corrections, S, J
 )
@@ -1907,7 +1935,7 @@ function parallel_IDC_FE(
     return (t, η)
 end
 
-function parallel_IDC_FE_reduced_stencil(
+function PCIDC_FE_reduced_stencil(
     ODE_system::ODESystem,
     number_corrections, S_levels, J, number_final_level_intervals, lagrange_bases
 )
@@ -1963,7 +1991,7 @@ function parallel_IDC_FE_reduced_stencil(
 end
 
 
-function parallel_IDC_RK2_Heuns(
+function PCIDC_RK2_Heuns(
     ODE_system::ODESystem,
     number_corrections, S, J
 )
@@ -2005,7 +2033,7 @@ function parallel_IDC_RK2_Heuns(
     return (t, η)
 end
 
-function parallel_IDC_RK4(
+function PCIDC_RK4(
     ODE_system::ODESystem,
     number_corrections, S, J
 )
@@ -2060,7 +2088,46 @@ function parallel_IDC_RK4(
     return (t, η)
 end
 
-function parallel_SDC_FE_lobatto_reduced_quadrature(
+function PCSDC_FE_lobatto(
+    ODE_system::ODESystem,
+    number_corrections, S, J
+)
+    @unpack_ODESystem ODE_system
+    M = number_corrections
+    N = J*M
+    t_gl = gausslobatto(M + 1)[1]
+    (t, group_scale_factor) = sandwich_special_nodes(t_gl, true, t_s, t_e, J)
+    Δt = t[2:end] .- t[1:end - 1]
+    η = initialise_η(y_s, N, number_corrections)
+
+    # Predict over groups
+    for j in 0:(J - 1)
+        for m in 1:M
+            k = j*M + m
+            η[k + 1, 1] = η[k, 1] .+ Δt[k].*f(t[k], η[k, 1])
+        end
+    end
+
+    # Correct over groups
+    for level in 2:(number_corrections + 1)
+        for j in 0:(J - 1)
+            I = (j*M + 1):((j + 1)*M + 1)
+            f_group = f.(t[I], η[I, level - 1])
+            for m in 1:M
+                k = j*M + m
+                ∫fₘ = [sum(S[m, j]*f_group[j][i] for j in axes(S, 2)) for i in axes(y_s, 1)]
+                if typeof(y_s) <: Number
+                    ∫fₘ = ∫fₘ[1]
+                end
+                η[k + 1, level] = η[k, level] .+ Δt[k].*(f(t[k], η[k, level]) .- f(t[k], η[k, level - 1])) .+ group_scale_factor.*∫fₘ
+            end
+        end
+    end
+
+    return (t, η)
+end
+
+function PCSDC_FE_lobatto_reduced_quadrature(
     ODE_system::ODESystem,
     number_corrections, S, J
 )
@@ -2099,7 +2166,7 @@ function parallel_SDC_FE_lobatto_reduced_quadrature(
     return (t, η)
 end
 
-function parallel_SDC_FE_lobatto_reduced_stencil(
+function PCSDC_FE_lobatto_reduced_stencil(
     ODE_system::ODESystem,
     number_corrections, S_levels, J, number_final_level_intervals, lagrange_bases
 )
@@ -2154,7 +2221,7 @@ function parallel_SDC_FE_lobatto_reduced_stencil(
     return (t_groups, η)
 end
 
-function parallel_SDC_FE_lobatto_reduced_stencil_and_quadrature(
+function PCSDC_FE_lobatto_reduced_stencil_and_quadrature(
     ODE_system::ODESystem,
     number_corrections, S_levels, J, number_final_level_intervals, lagrange_bases
 )
@@ -2217,7 +2284,7 @@ By
 https://doi.org/10.1090/S0025-5718-09-02276-5
 this algorithm should not work.
 """
-function parallel_SDC_RK4_lobatto(
+function PCSDC_RK4_lobatto(
     ODE_system::ODESystem,
     number_corrections, S, J
 )
