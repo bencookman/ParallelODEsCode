@@ -6,10 +6,10 @@ FE -> Forward Euler time-stepping scheme
 RKp -> Runge-Kutta method of order p
 IDC -> Integral Deferred Correction
 RIDC -> Revisionist Integral Deferred Correction
-RSDC -> Revisionist Spectral Deferred Correction
 """
 module ProjectTools
 
+# Required packages
 using
     LinearAlgebra,
     Statistics,
@@ -126,7 +126,7 @@ export
 err_abs(exact, approx) = abs.(exact .- approx)
 err_rel(exact, approx) = err_abs(exact, approx) ./ abs.(exact)
 err_norm(exact, approx, p) = norm(err_abs(exact, approx), p)
-err_rel_norm(exact, approx, p) = err_norm(exact, approx, p)/norm(exact, p)
+err_rel_norm(exact, approx, p) = err_norm(exact, approx, p)/norm(exact, p) # <- this one's used a lot, the relative lp-norm
 err_max(exact, approx) = maximum(err_abs(exact, approx))
 
 
@@ -142,11 +142,13 @@ Structure to contain an ODE system with no exact solution
     t_s::Float64
     t_e::Float64
     y_s::S
+    # This inner constructor replaces the default constructor
     ODESystem{T, S}(f, t_s, t_e, y_s) where {T<:Function, S} = (t_s < t_e) ? new(f, t_s, t_e, y_s) : error("time t_s must be less than time t_e")
 end
 
-# use form "Point(x::T, y::T) where {T<:Real} = Point{T}(x,y)"
+# use form "Point(x::T, y::T) where {T<:Real} = Point{T}(x,y)" - needs to be ncluded to make generics work i think
 ODESystem(f::T, t_s, t_e, y_s::S) where {T<:Function, S} = ODESystem{T, S}(f, t_s, t_e, y_s)
+# outer constructors help usability
 ODESystem(f, t_e, y_s) = ODESystem(f, 0.0, t_e, y_s)
 
 """
@@ -202,7 +204,10 @@ const trig_system_scalar = ODETestSystem(
     t -> cos(2π*t)
 )
 
-""" Problems with polynomial f should be 'easy' to solve numerically """
+"""
+Problems where f is polynomial in t should be 'easy' to solve numerically. So a fourth order integrator
+e.g. standard RK4 should be able to exactly integrate a third order poly t^3
+"""
 const poly_system_1 = ODETestSystem(
     (t, y) -> t^3,
     5.0,
@@ -295,6 +300,7 @@ match length of b.
     end
 end
 
+""" Ensure the length of vectors b and c match the size of matrix a """
 function check_RK_method_size(a, b, c)
     (length(axes(a)[1]) == length(axes(c)[1])) || error("a and c axes do not match")
     (length(axes(a)[2]) == length(axes(b)[1])) || error("a and b axes do not match")
@@ -432,7 +438,10 @@ const RK1_forward_euler = RKMethod(
     c = [0],
     order_of_accuracy = 1
 )
-""" Eighth order Cooper-Verner method. """
+"""
+Eighth order Cooper-Verner method. Isn't this a doozy. This sort of enormous
+high-order RK method tableau is exactly what we are trying to avoid.
+"""
 const RK8_Cooper_Verner = RKMethod(
     a = Float64[
         0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0;
@@ -460,6 +469,10 @@ const RK8_Cooper_Verner = RKMethod(
     order_of_accuracy = 8
 )
 
+"""
+Performs the numerical approximation according to a generic RKMethod. This is
+made simple with the generic RK_time_step_explicit function.
+"""
 function RK_general(
     ODE_system::ODESystem,
     N;
@@ -481,7 +494,10 @@ function RK_general(
     return (t, η)
 end
 
-""" Any RKMethod is callable to solve a given ODE_system over N time intervals  """
+"""
+Any RKMethod is callable to solve a given ODE_system over N time intervals.
+Super useful!!
+"""
 (RK_method::RKMethod)(ODE_system::ODESystem, N) = RK_general(ODE_system, N; RK_method = RK_method)
 
 
@@ -501,7 +517,10 @@ function integration_matrix(t_quadrature_nodes, t_time_steps; use_double = true)
     return S
 end
 
-""" """
+"""
+Calculate the integration matrix over the quadrature points 't_quadrature_nodes'
+between the points 't_time_steps' using double precision.
+"""
 function integration_matrix_Float64(t_quadrature_nodes::Vector{Float64}, t_time_steps::Vector{Float64})
     scipy_interpolate = pyimport("scipy.interpolate")
     # Calculate anti-derivatives of polynomial interpolants
@@ -522,6 +541,10 @@ function integration_matrix_Float64(t_quadrature_nodes::Vector{Float64}, t_time_
     return S
 end
 
+"""
+Calculate the integration matrix over the quadrature points 't_quadrature_nodes'
+between the points 't_time_steps' using double precision.
+"""
 function integration_matrix_Float32(t_quadrature_nodes::Vector{Float32}, t_time_steps::Vector{Float32})
     scipy_interpolate = pyimport("scipy.interpolate")
     # Calculate anti-derivatives of polynomial interpolants
@@ -545,15 +568,29 @@ end
 
 """ All of these are a function of the number of quadrature points, n """
 
+"""
+Integration matrix over uniform nodes with the same quadrature and time steps.
+"""
 integration_matrix_uniform(n; use_double = true) = integration_matrix(0.0:(n - 1), 0.0:(n - 1); use_double = use_double)
 
+"""
+Integration matrix over uniform nodes with an extra time step between each
+quadrature point for IDC-RK4 methods where c_2 = 0.5 in Butcher tableau.
+"""
 integration_matrix_uniform_RK4(n; use_double = true) = integration_matrix(0.0:(n - 1), 0.0:0.5:(n - 1); use_double = use_double)
 
+"""
+Integration matrix over Gauss-Legendre nodes with the same quadrature and time steps.
+"""
 function integration_matrix_legendre(n; use_double = true)
     legendre_nodes = gausslegendre(n)[1]
     return integration_matrix(legendre_nodes, vcat(-1, legendre_nodes, 1); use_double = use_double)
 end
 
+"""
+Integration matrix over Gauss-Legendre nodes with an extra time step between
+each quadrature point for IDC-RK4 methods where c_2 = 0.5 in Butcher tableau.
+"""
 function integration_matrix_legendre_RK4(n; use_double = true)
     legendre_nodes = gausslegendre(n)[1]
     legendre_full_nodes = vcat(-1, legendre_nodes, 1)
@@ -567,11 +604,18 @@ function integration_matrix_legendre_RK4(n; use_double = true)
     return integration_matrix(legendre_nodes, legendre_half_nodes; use_double = use_double)
 end
 
+"""
+Integration matrix over Gauss-Lobatto nodes with the same quadrature and time steps.
+"""
 function integration_matrix_lobatto(n; use_double = true)
     lobatto_nodes = gausslobatto(n)[1]
     return integration_matrix(lobatto_nodes, lobatto_nodes; use_double = use_double)
 end
 
+"""
+Integration matrix over Gauss-Lobatto nodes with an extra time step between
+each quadrature point for IDC-RK4 methods where c_2 = 0.5 in Butcher tableau.
+"""
 function integration_matrix_lobatto_RK4(n; use_double = true)
     lobatto_nodes = gausslobatto(n)[1]
     lobatto_half_nodes = [lobatto_nodes[1]]
@@ -604,6 +648,9 @@ const INTEGRATION_MATRIX_ARRAY_LOBATTO_HALF_TIME_STEPS = Vector{Matrix{Float64}}
 Giving only maximum size as argument is reasonable as the matrices of smaller
 size are significantly easier to generate, so they are of little cost. This also
 means the above 'INTEGRATION_MATRIX_ARRAY_...'s are automatically ordered.
+
+max_size is how many quadrature nodes should the largest integration matrix
+stored use.
 """
 
 function fill_integration_matrix_array_uniform(max_size; use_double = true)
@@ -661,7 +708,10 @@ function fill_integration_matrix_array_lobatto_half_time_steps(max_size; use_dou
 end
 
 
-""" assume t_for_interp ∈ [0, 1] """
+"""
+Generate the Lagrange basis functions for a set of quadature points where
+t_for_interp ∈ [0, 1] .
+"""
 function interpolation_polynomials(t_for_interp)
     scipy_interpolate = pyimport("scipy.interpolate")
 
@@ -676,6 +726,10 @@ function interpolation_polynomials(t_for_interp)
     return p_func
 end
 
+"""
+For a given set of Lagrange basis polynomials and points to intepolate on 
+domain [t_start, t_end], generate the interpolating polynomial of these points.
+"""
 function interpolation_func(η_values, p_func, t_start, t_end)
     f(t) = sum(η_values[i]*p_func[i](t) for i in axes(p_func, 1))
     return t -> f((t - t_start)/(t_end - t_start))
@@ -715,6 +769,9 @@ t:
 All functions should be suitable for non-scalar systems.
 """
 
+"""
+Initialises the array for η full of the correct type of zeros
+"""
 function initialise_η_zeros(y_s, N, number_corrections)
     η = []
     if typeof(y_s) <: Number
@@ -725,6 +782,10 @@ function initialise_η_zeros(y_s, N, number_corrections)
     return η
 end
 
+"""
+Convenience function, initialises the array for η full of the correct type of
+zeros with all η[1, :] = y_s.
+"""
 function initialise_η(y_s, N, number_corrections)
     η = initialise_η_zeros(y_s, N, number_corrections)
     for level in 1:(number_corrections + 1)
@@ -751,6 +812,7 @@ function IDC_FE(
     Δt = (t_e - t_s)/N
     η = initialise_η(y_s, N, number_corrections)
 
+    # Integrate over each composition
     for j in 0:(J - 1)
         # Prediction loop
         for m in 1:M
@@ -794,6 +856,7 @@ function IDC_RK2_Heuns(
     Δt = (t_e - t_s)/N
     η = initialise_η(y_s, N, number_corrections)
 
+    # Integrate over each composition
     for j in 0:(J - 1)
         # Prediction loop
         for m in 1:M

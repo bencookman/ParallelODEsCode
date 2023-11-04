@@ -24,47 +24,7 @@ large number of quadrature nodes, it is beneficial to have them precalculated. A
 better solution would be to calculate these once and store them in an external
 file (probably .csv for conveneience) somewhere, to be fetched as needed.
 """
-const INTEGRATION_MATRIX_ARRAY_0_TO_N = []
-const INTEGRATION_MATRIX_ARRAY_UNIFORM = []
 const INTEGRATION_MATRIX_ARRAY_CHEBYSHEV = []
-
-"""
-Giving only maximum size as argument is reasonable as the matrices of smaller
-size are significantly easier to generate, so they are of little cost. This also
-means the above 'INTEGRATION_MATRIX_ARRAY_...'s are automatically ordered.
-"""
-function fill_integration_matrix_array_0_to_N(max_size)
-    current_size = size(INTEGRATION_MATRIX_ARRAY_0_TO_N, 1)
-    (current_size >= max_size) && throw(error("now new matrices needed"))
-    new_N_array = (current_size + 1):max_size
-    push!(INTEGRATION_MATRIX_ARRAY_0_TO_N, [integration_matrix_uniform(N + 1) for N in new_N_array]...)
-    nothing
-end
-
-function fill_integration_matrix_array_uniform(max_size)
-    current_size = size(INTEGRATION_MATRIX_ARRAY_UNIFORM, 1)
-    (current_size >= max_size) && throw(error("now new matrices needed"))
-    new_N_array = (current_size + 1):max_size
-    t_nodes_array = [range(-1, 1, N + 1) for N in new_N_array]
-    push!(INTEGRATION_MATRIX_ARRAY_UNIFORM, [integration_matrix(t_nodes, t_nodes) for t_nodes in t_nodes_array]...)
-    nothing
-end
-
-function fill_integration_matrix_array_legendre(max_size)
-    current_size = size(INTEGRATION_MATRIX_ARRAY_LEGENDRE, 1)
-    (current_size >= max_size) && throw(error("now new matrices needed"))
-    new_N_array = (current_size + 1):max_size
-    push!(INTEGRATION_MATRIX_ARRAY_LEGENDRE, [integration_matrix_legendre(N) for N in new_N_array]...)
-    nothing
-end
-
-function fill_integration_matrix_array_lobatto(max_size)
-    current_size = size(INTEGRATION_MATRIX_ARRAY_LOBATTO, 1)
-    (current_size >= max_size) && throw(error("now new matrices needed"))
-    new_N_array = (current_size + 1):max_size
-    push!(INTEGRATION_MATRIX_ARRAY_LOBATTO, [integration_matrix_lobatto(N + 1) for N in new_N_array]...)
-    nothing
-end
 
 function fill_integration_matrix_array_chebyshev(max_size)
     current_size = size(INTEGRATION_MATRIX_ARRAY_CHEBYSHEV, 1)
